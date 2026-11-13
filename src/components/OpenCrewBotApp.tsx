@@ -12,6 +12,7 @@ import { NewBotDrawer } from "./BotForms";
 import { NewRoomDrawer } from "./RoomForms";
 import { SettingsPanel } from "./SettingsPanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
+import { ExecutionDashboard } from "./ExecutionDashboard";
 
 /** Modal sheets. Editing an existing bot or room happens in the inspector instead. */
 export type Panel = { kind: "new-bot" } | { kind: "new-room" } | { kind: "settings" } | { kind: "connections" } | null;
@@ -27,6 +28,7 @@ interface AppContext {
   state: AppState;
   dispatch: Dispatch<Action>;
   open: (id: ConversationId | null) => void;
+  openExecutions: () => void;
   refresh: () => Promise<void>;
   setPanel: (panel: Panel) => void;
   inspector: InspectorState;
@@ -126,6 +128,11 @@ export function OpenCrewBotApp() {
     [loadTranscript],
   );
 
+  const openExecutions = useCallback(() => {
+    dispatch({ type: "view", view: "executions" });
+    if (window.location.hash !== "#executions") window.history.replaceState(null, "", "#executions");
+  }, []);
+
   // First load: data, then the conversation from the URL (or the first pinned bot on wide screens).
   useEffect(() => {
     (async () => {
@@ -144,7 +151,8 @@ export function OpenCrewBotApp() {
         dispatch({ type: "bootstrap", ...data });
         const fromHash = decodeURIComponent(window.location.hash.slice(1));
         const ids = new Set(data.conversations.map((c) => c.id));
-        if (fromHash && ids.has(fromHash)) open(fromHash);
+        if (fromHash === "executions") dispatch({ type: "view", view: "executions" });
+        else if (fromHash && ids.has(fromHash)) open(fromHash);
         else if (window.matchMedia("(min-width: 768px)").matches) {
           const bot = data.bots.find((b) => b.pinned) ?? data.bots[0];
           const room = data.rooms.find((r) => r.pinned) ?? data.rooms[0];
@@ -189,10 +197,10 @@ export function OpenCrewBotApp() {
   }, [state.active, activeUnreadMarker]);
 
   const value = useMemo(
-    () => ({ state, dispatch, open, refresh, setPanel, inspector, setInspector, sidebarOpen, setSidebarOpen, toast }),
-    [state, open, refresh, inspector, setInspector, sidebarOpen, setSidebarOpen, toast],
+    () => ({ state, dispatch, open, openExecutions, refresh, setPanel, inspector, setInspector, sidebarOpen, setSidebarOpen, toast }),
+    [state, open, openExecutions, refresh, inspector, setInspector, sidebarOpen, setSidebarOpen, toast],
   );
-  const showInspector = inspector.open && Boolean(state.active);
+  const showInspector = state.view === "chat" && inspector.open && Boolean(state.active);
 
   return (
     <Ctx.Provider value={value}>
@@ -200,14 +208,14 @@ export function OpenCrewBotApp() {
         <div
           className={clsx(
             "h-full shrink-0 border-r border-line",
-            state.active ? "hidden" : "flex w-full",
+            state.view === "executions" ? "hidden md:flex md:w-[312px]" : state.active ? "hidden" : "flex w-full",
             sidebarOpen ? "md:flex md:w-[312px]" : "md:hidden",
           )}
         >
           <Sidebar />
         </div>
-        <main className={clsx("relative h-full min-w-0 flex-1", state.active ? "flex" : "hidden md:flex")}>
-          <ChatView />
+        <main className={clsx("relative h-full min-w-0 flex-1", state.view === "executions" || state.active ? "flex" : "hidden md:flex")}>
+          {state.view === "executions" ? <ExecutionDashboard /> : <ChatView />}
         </main>
         {showInspector && (
           <>

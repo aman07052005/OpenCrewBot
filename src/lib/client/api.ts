@@ -7,6 +7,9 @@ import type {
   ConnectionsState,
   ConversationId,
   ConversationSummary,
+  CreateExecutionRunInput,
+  ExecutionRun,
+  ExecutionTask,
   McpServer,
   ModelOption,
   Room,
@@ -65,4 +68,14 @@ export const api = {
     call<{ server: McpServer }>("/api/connections/mcp", { method: "POST", json: input }),
   removeMcpServer: (id: string) => call(`/api/connections/mcp/${id}`, { method: "DELETE" }),
   testMcpServer: (id: string) => call<{ tools: number }>(`/api/connections/mcp/${id}/test`, { method: "POST" }),
+  executionRuns: (limit = 100, offset = 0, before?: { createdAt: string; id: string }) =>
+    call<{ runs: ExecutionRun[] }>(`/api/execution-runs?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}${before ? `&beforeCreatedAt=${encodeURIComponent(before.createdAt)}&beforeId=${encodeURIComponent(before.id)}` : ""}`),
+  executionRun: (id: string) => call<{ run: ExecutionRun }>(`/api/execution-runs/${encodeURIComponent(id)}`),
+  createExecutionRun: (input: CreateExecutionRunInput) => call<{ run: ExecutionRun }>("/api/execution-runs", { method: "POST", json: input }),
+  startExecutionRun: (id: string) => call<{ run: ExecutionRun }>(`/api/execution-runs/${encodeURIComponent(id)}/start`, { method: "POST" }),
+  cancelExecutionRun: (id: string) => call<{ run: ExecutionRun }>(`/api/execution-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  approveExecutionTask: (runId: string, taskId: string) =>
+    call<{ task: ExecutionTask }>(`/api/execution-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/approve`, { method: "POST" }),
+  rejectExecutionTask: (runId: string, taskId: string) =>
+    call<{ task: ExecutionTask }>(`/api/execution-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/reject`, { method: "POST" }),
 };

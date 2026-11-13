@@ -4,6 +4,7 @@ import type { AppStatus, Bot, ChatMessage, ConversationId, ConversationSummary, 
 import { messagePreview } from "./format";
 
 export interface AppState {
+  view: "chat" | "executions";
   loaded: boolean;
   status: AppStatus | null;
   bots: Bot[];
@@ -24,6 +25,7 @@ export interface AppState {
 }
 
 export const initialState: AppState = {
+  view: "chat",
   loaded: false,
   status: null,
   bots: [],
@@ -49,6 +51,7 @@ export type Action =
       liveViews: Record<string, string>;
     }
   | { type: "open"; id: ConversationId | null }
+  | { type: "view"; view: AppState["view"] }
   | { type: "models"; models: ModelOption[] }
   | { type: "transcript"; id: ConversationId; messages: ChatMessage[]; running: string[] }
   | { type: "cleared"; id: ConversationId }
@@ -96,14 +99,17 @@ export function reducer(state: AppState, action: Action): AppState {
     case "models":
       return { ...state, models: action.models };
     case "open": {
-      if (!action.id) return { ...state, active: null };
+      if (!action.id) return { ...state, active: null, view: "chat" };
       const prev = state.summaries[action.id];
       return {
         ...state,
+        view: "chat",
         active: action.id,
         summaries: prev ? { ...state.summaries, [action.id]: { ...prev, unread: 0 } } : state.summaries,
       };
     }
+    case "view":
+      return { ...state, view: action.view };
     case "transcript": {
       const prev = state.summaries[action.id] ?? { id: action.id, running: [], unread: 0 };
       return {

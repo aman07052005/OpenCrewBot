@@ -29,6 +29,15 @@ export const keys = {
 /** Without a Nebius key, bots run on a scripted local model so the UI still works. */
 export const isMock = () => !keys.nebius();
 
+export type ExecutionMode = "mock" | "live";
+
+/** Task execution is local/mock unless the owner explicitly selects live mode. */
+export function configuredExecutionMode(): ExecutionMode {
+  const value = process.env.OPENCREWBOT_EXECUTION_MODE ?? "mock";
+  if (value !== "mock" && value !== "live") throw new Error("OPENCREWBOT_EXECUTION_MODE must be 'mock' or 'live'.");
+  return value;
+}
+
 export function appStatus(): AppStatus {
   return {
     mock: isMock(),

@@ -130,6 +130,76 @@ export interface AppStatus {
   dataDir: string;
 }
 
+/** Persistent Module D execution data returned by the execution API. */
+export type ExecutionMode = "mock" | "live";
+export type ExecutionRunStatus = "pending" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+export type ExecutionTaskStatus = "pending" | "blocked" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
+
+export interface ExecutionTaskInput {
+  key: string;
+  title: string;
+  agentId: string;
+  input?: unknown;
+  dependsOn?: string[];
+  requiresApproval?: boolean;
+  maxAttempts?: number;
+  timeoutMs?: number;
+}
+
+export interface CreateExecutionRunInput {
+  name: string;
+  concurrencyLimit?: number;
+  executionMode?: ExecutionMode;
+  tasks: ExecutionTaskInput[];
+}
+
+export interface ExecutionTask {
+  id: string;
+  runId: string;
+  title: string;
+  agentId: string;
+  status: ExecutionTaskStatus;
+  requiresApproval: boolean;
+  approvedAt: string | null;
+  dependencies: string[];
+  input: unknown;
+  output: unknown;
+  error: string | null;
+  attempts: number;
+  maxAttempts: number;
+  timeoutMs: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface ExecutionDependencyOutput {
+  taskId: string;
+  title: string;
+  agentId: string;
+  output: unknown;
+}
+
+export type ExecutionTaskCounts = Record<ExecutionTaskStatus, number>;
+
+export interface ExecutionRun {
+  id: string;
+  name: string;
+  status: ExecutionRunStatus;
+  concurrencyLimit: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  executionMode: ExecutionMode;
+  tasks?: ExecutionTask[];
+  /** Included on run-list responses for a compact progress summary. */
+  taskCount?: number;
+  taskCounts?: ExecutionTaskCounts;
+}
+
 /** Events the server pushes to the browser over one SSE stream. */
 export type ServerEvent =
   | { type: "message"; message: ChatMessage }

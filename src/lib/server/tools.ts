@@ -96,6 +96,34 @@ export function buildTools(bot: Bot): BotToolset {
   return { tools, instructions, capabilities };
 }
 
+/**
+ * Task sessions get only bot-enabled, read-only tools. Memory writes, browser,
+ * Composio, and MCP actions are intentionally absent until task tool approvals
+ * can use the complete chat approval lifecycle.
+ */
+export function buildExecutionTools(bot: Bot): BotToolset {
+  const tools: ToolsInput = {};
+  const instructions: string[] = [];
+  const capabilities: string[] = [];
+
+  if (bot.tools.webSearch && keys.tavily()) {
+    Object.assign(tools, webTools());
+    capabilities.push("Read-only web search: search the web, extract pages, and crawl sites. Cite source URLs.");
+  } else if (bot.tools.webSearch) {
+    capabilities.push("Web search is enabled for this bot but unavailable because no Tavily key is configured.");
+  }
+
+  if (bot.tools.codeMode) {
+    const codeMode = createCodeMode({ tools: { ...tools } }, new QuickJsCodeModeTransport({ memoryLimitMb: 128 }));
+    tools[CODE_MODE_TOOL] = codeMode.tool;
+    instructions.push(codeMode.instructions);
+    if (Object.keys(tools).length > 1 || (Object.keys(tools).length === 1 && tools[CODE_MODE_TOOL])) {
+      capabilities.push("Run TypeScript in the isolated code sandbox using only the read-only tools listed above.");
+    }
+  }
+  return { tools, instructions, capabilities };
+}
+
 /** Which approval policy a tool falls under. Read and memory tools never ask;
  * acting in the browser does, unless the bot has Full access. */
 /** MCP tool names that only look things up. A heuristic over the tool's own name:

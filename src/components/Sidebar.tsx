@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, X } from "lucide-react";
+import { Activity, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client/api";
 import { timeLabel } from "@/lib/client/format";
@@ -63,7 +63,7 @@ function RowItem({ row }: { row: Row }) {
   const { state, open, setInspector, toast } = useApp();
   const [menu, setMenu] = useState(false);
   const conversationId = `${row.kind === "room" ? "room" : "dm"}:${row.id}`;
-  const active = state.active === conversationId;
+  const active = state.view === "chat" && state.active === conversationId;
   const summary = row.summary;
   const running = summary?.running ?? [];
   const name = row.kind === "room" ? row.room.name : row.bot.name;
@@ -204,7 +204,7 @@ function SidebarFooter() {
 }
 
 export function Sidebar() {
-  const { state, setPanel, setSidebarOpen } = useApp();
+  const { state, openExecutions, setPanel, setSidebarOpen } = useApp();
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
@@ -231,7 +231,7 @@ export function Sidebar() {
   }, [state.rooms, state.bots, state.summaries, query]);
 
   return (
-    <nav aria-label="Bots and rooms" className="flex h-full w-full flex-col bg-side">
+    <nav aria-label="Main navigation" className="flex h-full w-full flex-col bg-side">
       <header className="flex h-16 shrink-0 items-center justify-end gap-1.5 px-3">
         <IconButton label="Hide sidebar" onClick={() => setSidebarOpen(false)} className="mr-auto hidden md:inline-flex">
           <PanelLeft size={18} />
@@ -267,6 +267,18 @@ export function Sidebar() {
         <Mascot color="#f4f4f4" size={60} />
         <span className="mt-2 text-[14px] font-medium">OpenCrewBot</span>
       </div>
+
+      <button
+        onClick={openExecutions}
+        aria-current={state.view === "executions" ? "page" : undefined}
+        className={clsx(
+          "mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium transition-colors",
+          state.view === "executions" ? "bg-active text-ink" : "text-mute hover:bg-hover hover:text-ink",
+        )}
+      >
+        <Activity size={17} />
+        Executions
+      </button>
 
       {searching && (
         <div className="px-3 pb-2">

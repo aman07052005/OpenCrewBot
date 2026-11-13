@@ -17,7 +17,9 @@ import { createMockModel } from "./mock-model";
 import { announceLiveView, createSession, releaseSession } from "./browserbase";
 import { buildConnectorTools, connectionsVersion } from "./connectors";
 import { systemPrompt } from "./prompt";
-import { buildTools, toolCategory, toolLabel, toolPreview, toolSources } from "./tools";
+import { buildExecutionTools, buildTools, toolCategory, toolLabel, toolPreview, toolSources } from "./tools";
+import { executionToolCategory, restrictExecutionPermissions } from "./execution-permissions";
+import type { ExecutionTask } from "./execution-engine";
 
 // ── shared state that must survive Next.js hot reloads ─────────────────
 
@@ -173,6 +175,98 @@ async function sessionFor(bot: Bot, conversationId: ConversationId): Promise<Ses
   await session.permissions.setForCategory({ category: "execute", policy: bot.approval === "full" ? "allow" : "ask" });
   state.sessions.set(k, session);
   return session;
+}
+
+export interface IsolatedExecutionRequest {
+  bot: Bot;
+  task: ExecutionTask;
+  content: string;
+  sessionId: string;
+  signal: AbortSignal;
+}
+
+export interface IsolatedExecutionResult {
+  text: string;
+  model: string;
+}
+
+/** Run one live task in a fresh controller, session, resource, and thread. */
+export async function runIsolatedExecutionTask(request: IsolatedExecutionRequest): Promise<IsolatedExecutionResult> {
+  if (!process.env.NEBIUS_API_KEY) throw new Error("Live task execution requires NEBIUS_API_KEY; no mock fallback was used.");
+  if (request.signal.aborted) throw request.signal.reason ?? new Error("Task cancelled.");
+
+  const { bot, task, sessionId, signal } = request;
+  const safeTools = buildExecutionTools(bot);
+  const capabilities = [
+    ...safeTools.capabilities,
+    "Task sessions may only use the explicitly enabled read-only tools; external actions, browser control, app connections, and memory writes are disabled.",
+  ];
+  const memory = new Memory({ storage: state.storage, options: { lastMessages: 20 } });
+  const agent = new Agent({
+    id: `execution-agent-${task.id}-${task.attempts}`,
+    name: bot.name,
+    instructions: () => systemPrompt(bot, capabilities, safeTools.instructions, { allowAskUser: false, memoryReadOnly: true }),
+    model: `nebius/${bot.model}`,
+    tools: safeTools.tools,
+    memory,
+  });
+  const controller = new AgentController({
+    id: `execution-controller-${task.id}-${task.attempts}`,
+    agent,
+    storage: state.storage,
+    modes: [{ id: "execution", name: "Execution", metadata: { default: true } }],
+    toolCategoryResolver: executionToolCategory,
+    disableBuiltinTools: ["submit_plan", "task_write", "task_update", "task_complete", "task_check", "subagent", "ask_user"],
+  });
+
+  let session: Session | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let endReason: "complete" | "aborted" | "error" | "suspended" | undefined;
+  let runtimeError: string | undefined;
+  let text = "";
+  let abortListener: (() => void) | undefined;
+
+  try {
+    await controller.init();
+    session = await controller.createSession({
+      resourceId: `execution:${task.id}:${task.attempts}`,
+      ownerId: OWNER_ID,
+      id: sessionId,
+      scope: sessionId,
+      threadId: sessionId,
+      createInitialThread: true,
+    });
+    await restrictExecutionPermissions(session.permissions);
+    unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_update" && event.event.type === "text-delta") text += event.event.delta;
+      if (event.type === "agent_end") endReason = event.reason;
+      if (event.type === "error") runtimeError = event.error?.message || "Mastra agent execution failed.";
+    });
+
+    const aborted = new Promise<never>((_, reject) => {
+      abortListener = () => {
+        try { session?.abort(); } catch { /* the session may already be idle */ }
+        reject(signal.reason ?? new Error("Task cancelled."));
+      };
+      signal.addEventListener("abort", abortListener, { once: true });
+    });
+    if (signal.aborted) abortListener?.();
+    await Promise.race([session.sendMessage({ content: request.content }), aborted]);
+
+    if (signal.aborted) throw signal.reason ?? new Error("Task cancelled.");
+    if (endReason !== "complete") {
+      throw new Error(runtimeError ?? (endReason === "suspended"
+        ? "The task requested an approval or user answer that is not available in execution sessions."
+        : endReason === "aborted" ? "Mastra execution was aborted." : "Mastra ended without a successful completion event."));
+    }
+    if (!text.trim()) throw new Error(runtimeError ?? "Mastra completed without producing text output.");
+    return { text: text.trim(), model: bot.model };
+  } finally {
+    if (abortListener) signal.removeEventListener("abort", abortListener);
+    unsubscribe?.();
+    try { session?.abort(); } catch { /* already completed */ }
+    await controller.destroy().catch(() => {});
+  }
 }
 
 // ── running state ──────────────────────────────────────────────────────
