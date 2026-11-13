@@ -4,6 +4,7 @@ import { createClient, type Client } from "@libsql/client";
 import { APP_DB_URL } from "./config";
 import type { Bot, ChatMessage, ConversationId, Room } from "@/lib/shared/types";
 import { migrateExecutionSchema } from "./execution-schema";
+import { migrateCollaborationSchema } from "./collaboration-schema";
 
 // Cached across hot reloads, together with the file it points at, so a
 // changed database path opens a fresh connection instead of reusing one
@@ -11,7 +12,7 @@ import { migrateExecutionSchema } from "./execution-schema";
 const g = globalThis as unknown as { __opencrewbotDb?: { url: string; schema?: number; client: Promise<Client> } };
 
 /** Bump when a table is added, so a hot-reloaded server re-runs the CREATE statements. */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 async function open(): Promise<Client> {
   const db = createClient({ url: APP_DB_URL });
@@ -36,6 +37,7 @@ async function open(): Promise<Client> {
     "write",
   );
   await migrateExecutionSchema(db);
+  await migrateCollaborationSchema(db);
   return db;
 }
 

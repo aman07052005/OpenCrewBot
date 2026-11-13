@@ -152,8 +152,17 @@ export function RoomForm({ room, onDone }: { room?: Room; onDone?: (room: Room) 
 }
 
 export function NewRoomDrawer({ onClose }: { onClose: () => void }) {
+  const { refresh, toast } = useApp();
+  const [installing, setInstalling] = useState(false);
+  const [report, setReport] = useState("");
   return (
     <Drawer title="New room" onClose={onClose}>
+      <div className="mb-5 space-y-2 rounded-xl border border-line p-3">
+        <p className="text-sm font-medium">Collaboration room templates</p>
+        <p className="text-xs text-mute">Install the four specialised rooms without overwriting existing rooms. Missing agents can be added in Agent Factory or selected in the manual form below.</p>
+        <Button size="sm" disabled={installing} onClick={async () => { setInstalling(true); try { const r = await api.collaborationRooms(); setReport(`Installed: ${r.installed.join(", ") || "none"}. Existing: ${r.existing.join(", ") || "none"}. Missing members: ${r.missing.map((m) => `${m.room}: ${m.handles.join(", ")}`).join("; ") || "none"}.`); await refresh(); } catch (e) { toast(e instanceof Error ? e.message : String(e)); } finally { setInstalling(false); } }}>{installing ? "Installing…" : "Install collaboration rooms"}</Button>
+        {report && <p className="text-xs text-mute">{report}</p>}
+      </div>
       <RoomForm onDone={onClose} />
     </Drawer>
   );

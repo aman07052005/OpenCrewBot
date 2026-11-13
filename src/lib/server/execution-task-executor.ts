@@ -1,3 +1,4 @@
+import { collaborationPrompt } from "./collaboration-protocol.ts";
 import type { Bot } from "@/lib/shared/types";
 import type { ExecutionDependencyOutput, ExecutionMode, ExecutionTask, TaskExecutor } from "./execution-engine";
 
@@ -63,6 +64,7 @@ export function buildExecutionPrompt(task: ExecutionTask, dependencies: Executio
     originalInstruction ? `## Original business instruction\n${originalInstruction}` : "",
     "## Completed prerequisite outputs",
     dependencySection,
+    collaborationPrompt(task.input),
   ].filter(Boolean).join("\n\n");
 }
 

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mockCollaborationOutput } from "./collaboration-protocol.ts";
 import type { Client, InStatement } from "@libsql/client";
 import type { CreateExecutionRunInput, ExecutionDependencyOutput, ExecutionMode, ExecutionRun, ExecutionTask, ExecutionTaskStatus, ExecutionRunStatus } from "@/lib/shared/types";
 
@@ -116,7 +117,7 @@ async function dependencyOutputsFor(client: Client, taskId: string): Promise<Exe
   return res.rows.map((row) => ({ taskId: str(row.id), title: str(row.title), agentId: str(row.agent_id), output: json(row.output_json) }));
 }
 
-export async function createExecutionRun(client: Client, input: CreateExecutionRunInput): Promise<ExecutionRun> {
+export async function createExecutionRun(client: Client, input: CreateExecutionRunInput, linkedStatements?: (runId: string) => InStatement[]): Promise<ExecutionRun> {
   validateExecutionRunInput(input);
   const id = randomUUID();
   const now = isoNow();
@@ -136,6 +137,7 @@ export async function createExecutionRun(client: Client, input: CreateExecutionR
       args: [id, taskId, idsByKey.get(dep)!],
     });
   }
+  if (linkedStatements) statements.push(...linkedStatements(id));
   await client.batch(statements, "write");
   return (await getExecutionRun(client, id))!;
 }
@@ -379,8 +381,10 @@ export async function recoverExecutionRuns(
 /** Deterministic local executor. It never calls a model, browser, or external tool. */
 export const deterministicMockExecutor: TaskExecutor = {
   retrySafety: "idempotent",
-  execute: async (task, { signal }) => {
+  execute: async (task, { signal, dependencies }) => {
     if (signal.aborted) throw signal.reason ?? new Error("Task cancelled.");
+    const collaboration = mockCollaborationOutput(task, dependencies);
+    if (collaboration) return collaboration;
     return {
       mode: "mock",
       simulated: true,

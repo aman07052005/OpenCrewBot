@@ -72,10 +72,10 @@ function RunRow({ run, selected, onSelect }: { run: ExecutionRun; selected: bool
   );
 }
 
-export function ExecutionDashboard() {
+export function ExecutionDashboard({ initialRunId = null }: { initialRunId?: string | null } = {}) {
   const { state, open, toast } = useApp();
   const [runs, setRuns] = useState<ExecutionRun[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
   const [detail, setDetail] = useState<ExecutionRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);

@@ -28,7 +28,7 @@ interface AppContext {
   state: AppState;
   dispatch: Dispatch<Action>;
   open: (id: ConversationId | null) => void;
-  openExecutions: () => void;
+  openExecutions: (runId?: string) => void;
   refresh: () => Promise<void>;
   setPanel: (panel: Panel) => void;
   inspector: InspectorState;
@@ -67,6 +67,7 @@ const isWide = () => window.matchMedia("(min-width: 1280px)").matches;
 
 export function OpenCrewBotApp() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [executionTarget, setExecutionTarget] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [inspector, setInspectorState] = useState<InspectorState>({ open: false, tab: "details" });
   const [sidebarOpen, setSidebarState] = useState(true);
@@ -128,9 +129,11 @@ export function OpenCrewBotApp() {
     [loadTranscript],
   );
 
-  const openExecutions = useCallback(() => {
+  const openExecutions = useCallback((runId?: string) => {
+    setExecutionTarget(runId ?? null);
     dispatch({ type: "view", view: "executions" });
-    if (window.location.hash !== "#executions") window.history.replaceState(null, "", "#executions");
+    const hash = runId ? `#executions:${encodeURIComponent(runId)}` : "#executions";
+    if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
   }, []);
 
   // First load: data, then the conversation from the URL (or the first pinned bot on wide screens).
@@ -151,7 +154,10 @@ export function OpenCrewBotApp() {
         dispatch({ type: "bootstrap", ...data });
         const fromHash = decodeURIComponent(window.location.hash.slice(1));
         const ids = new Set(data.conversations.map((c) => c.id));
-        if (fromHash === "executions") dispatch({ type: "view", view: "executions" });
+        if (fromHash === "executions" || fromHash.startsWith("executions:")) {
+          setExecutionTarget(fromHash.startsWith("executions:") ? fromHash.slice("executions:".length) : null);
+          dispatch({ type: "view", view: "executions" });
+        }
         else if (fromHash && ids.has(fromHash)) open(fromHash);
         else if (window.matchMedia("(min-width: 768px)").matches) {
           const bot = data.bots.find((b) => b.pinned) ?? data.bots[0];
@@ -215,7 +221,7 @@ export function OpenCrewBotApp() {
           <Sidebar />
         </div>
         <main className={clsx("relative h-full min-w-0 flex-1", state.view === "executions" || state.active ? "flex" : "hidden md:flex")}>
-          {state.view === "executions" ? <ExecutionDashboard /> : <ChatView />}
+          {state.view === "executions" ? <ExecutionDashboard key={executionTarget ?? "all"} initialRunId={executionTarget} /> : <ChatView />}
         </main>
         {showInspector && (
           <>

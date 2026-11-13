@@ -269,7 +269,7 @@ export function Sidebar() {
       </div>
 
       <button
-        onClick={openExecutions}
+        onClick={() => openExecutions()}
         aria-current={state.view === "executions" ? "page" : undefined}
         className={clsx(
           "mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium transition-colors",

@@ -1,3 +1,4 @@
+import type { CollaborationDraft, CollaborationSession, RoomInstallResult } from "@/lib/shared/collaboration";
 import type {
   AppStatus,
   Bot,
@@ -59,6 +60,12 @@ export const api = {
   saveMemory: (id: string, content: string) => call<{ content: string }>(`/api/bots/${id}/memory`, { method: "PUT", json: { content } }),
   createRoom: (input: RoomInput) => call<{ room: Room }>("/api/rooms", { method: "POST", json: input }),
   updateRoom: (id: string, patch: Partial<RoomInput>) => call<{ room: Room }>(`/api/rooms/${id}`, { method: "PATCH", json: patch }),
+  collaborationRooms: () => call<RoomInstallResult>("/api/rooms/templates/install", { method: "POST" }),
+  collaborationHistory: (roomId: string) => call<{ sessions: CollaborationSession[] }>(`/api/rooms/${encodeURIComponent(roomId)}/collaborations`),
+  collaborationPlan: (roomId: string, input: Omit<CollaborationDraft, "plan">) => call<{ draft: CollaborationDraft }>(`/api/rooms/${encodeURIComponent(roomId)}/collaborations/plan`, { method: "POST", json: input }),
+  createCollaboration: (roomId: string, draft: CollaborationDraft) => call<{ session: CollaborationSession }>(`/api/rooms/${encodeURIComponent(roomId)}/collaborations`, { method: "POST", json: draft }),
+  collaborationSession: (roomId: string, id: string) => call<{ session: CollaborationSession }>(`/api/rooms/${encodeURIComponent(roomId)}/collaborations/${encodeURIComponent(id)}`),
+  collaborationAction: (roomId: string, id: string, input: { action: "start" | "advance" | "interrupt" | "resume" | "cancel" } | { action: "continue"; draft: CollaborationDraft }) => call<{ session: CollaborationSession }>(`/api/rooms/${encodeURIComponent(roomId)}/collaborations/${encodeURIComponent(id)}`, { method: "POST", json: input }),
   deleteRoom: (id: string) => call(`/api/rooms/${id}`, { method: "DELETE" }),
   messages: (id: ConversationId) => call<{ messages: ChatMessage[]; running: string[] }>(`${conv(id)}/messages`),
   send: (id: ConversationId, text: string) => call<{ message: ChatMessage }>(`${conv(id)}/messages`, { method: "POST", json: { text } }),

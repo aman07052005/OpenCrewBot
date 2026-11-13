@@ -8,7 +8,8 @@ import type { Bot, ChatMessage, Room } from "@/lib/shared/types";
 import { useApp } from "./OpenCrewBotApp";
 import { MessageItem } from "./Message";
 import { Menu } from "./Sidebar";
-import { BotAvatar, IconButton, RoomAvatar } from "./ui";
+import { BotAvatar, Button, IconButton, RoomAvatar } from "./ui";
+import { CollaborationPanel } from "./CollaborationPanel";
 
 function useClear(conversationId: string) {
   const { dispatch, toast } = useApp();
@@ -108,7 +109,7 @@ function EmptyState({ bot, room, members, onPick }: { bot?: Bot; room?: Room; me
       : ["Draft a short launch post for my project", "remember that I write in a casual tone", "ask me something"]
     : ["Plan a launch for next Friday", "@everyone introduce yourselves", "Research our top 3 competitors and draft a summary"];
   return (
-    <div className="mx-auto flex min-h-full max-w-lg flex-col items-center justify-center px-6 pt-16 pb-8 text-center">
+    <div className={clsx("mx-auto flex min-h-full max-w-lg flex-col items-center justify-center px-6 pb-8 text-center", room ? "pt-4" : "pt-16")}>
       {bot ? <BotAvatar bot={bot} size={84} /> : <RoomAvatar colors={members.map((m) => m.color)} size={84} />}
       <h2 className="mt-4 text-[22px] font-semibold tracking-tight">{bot?.name ?? room?.name}</h2>
       <p className="mt-1.5 text-[14.5px] leading-relaxed text-mute">{bot ? bot.description : room?.topic || "A group chat with your bots."}</p>
@@ -344,6 +345,7 @@ function shouldShowAuthor(messages: ChatMessage[], i: number, isRoom: boolean): 
 
 export function ChatView() {
   const { state, sidebarOpen, setSidebarOpen } = useApp();
+  const [collaborationRoomId, setCollaborationRoomId] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ conversationId: string; text: string; n: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -383,6 +385,8 @@ export function ChatView() {
   return (
     <div className="relative flex min-w-0 flex-1 flex-col">
       <TopBar bot={bot} room={room} members={members} running={running} />
+      {room && <div className="shrink-0 px-4 pt-16 pb-2"><Button size="sm" variant={collaborationRoomId === room.id ? "primary" : "secondary"} onClick={() => setCollaborationRoomId(collaborationRoomId === room.id ? null : room.id)}>{collaborationRoomId === room.id ? "Back to room chat" : "Start collaboration / history"}</Button></div>}
+      {room && collaborationRoomId === room.id ? <CollaborationPanel key={room.id} room={room} members={members} /> : <>
       <div
         ref={scroller}
         onScroll={(e) => {
@@ -396,7 +400,7 @@ export function ChatView() {
         ) : messages.length === 0 ? (
           <EmptyState bot={bot} room={room} members={members} onPick={(text) => setPrefill((p) => ({ conversationId: id, text, n: (p?.n ?? 0) + 1 }))} />
         ) : (
-          <div className="mx-auto max-w-[780px] space-y-4 px-4 pt-20 pb-6">
+          <div className={clsx("mx-auto max-w-[780px] space-y-4 px-4 pb-6", room ? "pt-4" : "pt-20")}>
             {messages.map((m, i) => (
               <MessageItem key={m.id} message={m} bot={state.bots.find((b) => b.id === m.botId)} showAuthor={shouldShowAuthor(messages, i, Boolean(room))} />
             ))}
@@ -411,6 +415,7 @@ export function ChatView() {
         running={running.length > 0}
         prefill={prefill?.conversationId === id ? prefill.text : undefined}
       />
+      </>}
     </div>
   );
 }
