@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Activity, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, X } from "lucide-react";
+import { Activity, NotebookPen, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client/api";
 import { timeLabel } from "@/lib/client/format";
@@ -279,6 +279,8 @@ export function Sidebar() {
         <Activity size={17} />
         Executions
       </button>
+
+      <button onClick={() => setPanel({ kind: "memory" })} className="mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium text-mute hover:bg-hover hover:text-ink"><NotebookPen size={17} /> Memory manager</button>
 
       {searching && (
         <div className="px-3 pb-2">

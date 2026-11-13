@@ -249,6 +249,8 @@ export function MemoryEditor({ bot }: { bot: Bot }) {
   const [saved, setSaved] = useState("");
   const [meta, setMeta] = useState<{ path: string; limit: { lines: number; bytes: number } } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [revision, setRevision] = useState("");
+  const [reload, setReload] = useState(0);
   const dirty = content !== null && content !== saved;
   const version = state.memoryVersion[bot.id] ?? 0;
 
@@ -261,27 +263,28 @@ export function MemoryEditor({ bot }: { bot: Bot }) {
   useEffect(() => {
     if (dirtyRef.current) return;
     let cancelled = false;
-    api
-      .getMemory(bot.id)
+    api.getMemory(bot.id)
       .then((data) => {
         if (cancelled) return;
         setSaved(data.content);
         setContent(data.content);
+        setRevision(data.revision);
         setMeta({ path: data.path, limit: data.limit });
       })
       .catch((error) => toast(error instanceof Error ? error.message : "Couldn't load memory."));
     return () => {
       cancelled = true;
     };
-  }, [bot.id, version, toast]);
+  }, [bot.id, version, toast, reload]);
 
   const save = async () => {
     if (content === null) return;
     setSaving(true);
     try {
-      const data = await api.saveMemory(bot.id, content);
-      setSaved(data.content);
-      setContent(data.content);
+      const { document } = await api.saveScopedMemory({ scope: "agent", id: bot.id }, content, revision, "Owner edited agent memory in inspector");
+      setSaved(document.content);
+      setContent(document.content);
+      setRevision(document.revision);
     } catch (error) {
       toast(error instanceof Error ? error.message : "Couldn't save memory.");
     } finally {
@@ -313,8 +316,8 @@ export function MemoryEditor({ bot }: { bot: Bot }) {
         </span>
         <span className="flex shrink-0 gap-2">
           {dirty && (
-            <Button size="sm" variant="ghost" onClick={() => setContent(saved)}>
-              Revert
+            <Button size="sm" variant="ghost" onClick={() => { setContent(saved); dirtyRef.current = false; setReload((n) => n + 1); }}>
+              Reload
             </Button>
           )}
           <Button size="sm" variant="primary" disabled={!dirty || saving} onClick={save}>

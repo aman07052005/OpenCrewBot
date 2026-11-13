@@ -1,3 +1,4 @@
+import type { MemoryCatalog, MemoryDocument, MemoryTarget } from "@/lib/shared/scoped-memory";
 import type { CollaborationDraft, CollaborationSession, RoomInstallResult } from "@/lib/shared/collaboration";
 import type {
   AppStatus,
@@ -45,6 +46,10 @@ export interface Bootstrap {
 }
 
 export const api = {
+  memoryCatalog: () => call<{ catalog: MemoryCatalog }>("/api/memory/catalog"),
+  changeMemoryCatalog: (input: { action: "create"; name: string } | { action: "link"; roomId: string; projectId: string | null }) => call<{ catalog: MemoryCatalog }>("/api/memory/catalog", { method: "POST", json: input }),
+  scopedMemory: (target: MemoryTarget) => call<{ document: MemoryDocument }>(`/api/memory?scope=${encodeURIComponent(target.scope)}&id=${encodeURIComponent(target.id)}`),
+  saveScopedMemory: (target: MemoryTarget, content: string, revision: string, reason: string) => call<{ document: MemoryDocument }>("/api/memory", { method: "PUT", json: { ...target, content, revision, reason } }),
   bootstrap: () => call<Bootstrap>("/api/bootstrap"),
   models: (refresh = false) => call<{ models: ModelOption[] }>(`/api/models${refresh ? "?refresh=1" : ""}`),
   createBot: (input: BotInput) => call<{ bot: Bot }>("/api/bots", { method: "POST", json: input }),
@@ -56,7 +61,7 @@ export const api = {
     call<{ bot: Bot }>("/api/agent-factory/create", { method: "POST", json: { draft } }),
   installWorkforceTemplates: () =>
     call<{ installed: string[]; alreadyInstalled: string[]; conflicts: Array<{ templateId: string; agentName: string }> }>("/api/agent-factory/templates/install", { method: "POST" }),
-  getMemory: (id: string) => call<{ content: string; path: string; limit: { lines: number; bytes: number } }>(`/api/bots/${id}/memory`),
+  getMemory: (id: string) => call<{ content: string; revision: string; path: string; limit: { lines: number; bytes: number } }>(`/api/bots/${id}/memory`),
   saveMemory: (id: string, content: string) => call<{ content: string }>(`/api/bots/${id}/memory`, { method: "PUT", json: { content } }),
   createRoom: (input: RoomInput) => call<{ room: Room }>("/api/rooms", { method: "POST", json: input }),
   updateRoom: (id: string, patch: Partial<RoomInput>) => call<{ room: Room }>(`/api/rooms/${id}`, { method: "PATCH", json: patch }),

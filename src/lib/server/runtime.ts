@@ -17,6 +17,7 @@ import { createMockModel } from "./mock-model";
 import { announceLiveView, createSession, releaseSession } from "./browserbase";
 import { buildConnectorTools, connectionsVersion } from "./connectors";
 import { systemPrompt } from "./prompt";
+import { conversationSharedMemory } from "./scoped-memory-service";
 import { buildExecutionTools, buildTools, toolCategory, toolLabel, toolPreview, toolSources } from "./tools";
 import { executionToolCategory, restrictExecutionPermissions } from "./execution-permissions";
 import type { ExecutionTask } from "./execution-engine";
@@ -488,7 +489,8 @@ async function executeTurn({ bot, conversationId, content, route }: TurnRequest)
   try {
     const session = await sessionFor(latest, conversationId);
     unsubscribe = session.subscribe((event) => folder.handle(event));
-    await session.sendMessage({ content });
+    const shared = latest.tools.memory ? await conversationSharedMemory(latest.id, conversationId) : "";
+    await session.sendMessage({ content: shared ? `${shared}\n\n## Current conversation message\n${content}` : content });
     // The run settled. If no terminal event reached us and nothing waits on the
     // person, close the turn here so it never hangs as "streaming".
     if (!folder.finished && !folder.waitingOnPerson()) await folder.finish("done");

@@ -12,10 +12,11 @@ import { NewBotDrawer } from "./BotForms";
 import { NewRoomDrawer } from "./RoomForms";
 import { SettingsPanel } from "./SettingsPanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
+import { MemoryManager } from "./MemoryManager";
 import { ExecutionDashboard } from "./ExecutionDashboard";
 
 /** Modal sheets. Editing an existing bot or room happens in the inspector instead. */
-export type Panel = { kind: "new-bot" } | { kind: "new-room" } | { kind: "settings" } | { kind: "connections" } | null;
+export type Panel = { kind: "new-bot" } | { kind: "new-room" } | { kind: "settings" } | { kind: "connections" } | { kind: "memory" } | null;
 
 /** Bots use details/memory/browser; rooms use members/settings. */
 export type InspectorTab = "details" | "memory" | "browser" | "members" | "settings";
@@ -239,6 +240,7 @@ export function OpenCrewBotApp() {
       {panel?.kind === "new-bot" && <NewBotDrawer onClose={() => setPanel(null)} />}
       {panel?.kind === "new-room" && <NewRoomDrawer onClose={() => setPanel(null)} />}
       {panel?.kind === "settings" && <SettingsPanel onClose={() => setPanel(null)} />}
+      {panel?.kind === "memory" && <MemoryManager onClose={() => setPanel(null)} />}
       {panel?.kind === "connections" && <ConnectionsPanel onClose={() => setPanel(null)} />}
       {toastText && (
         <div

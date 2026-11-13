@@ -68,7 +68,7 @@ export function buildExecutionPrompt(task: ExecutionTask, dependencies: Executio
   ].filter(Boolean).join("\n\n");
 }
 
-export function createMastraTaskExecutor(options: { getBot: ExecutionBotLoader; runtime: ExecutionAgentRuntime }): TaskExecutor {
+export function createMastraTaskExecutor(options: { getBot: ExecutionBotLoader; runtime: ExecutionAgentRuntime; loadMemory?: (task: ExecutionTask, bot: Bot) => Promise<string> }): TaskExecutor {
   const { getBot: loadBot, runtime } = options;
   return {
     // Inference calls and possible external reads are not assumed idempotent.
@@ -82,7 +82,7 @@ export function createMastraTaskExecutor(options: { getBot: ExecutionBotLoader; 
       const result = await runtime.runTask({
         bot,
         task,
-        content: buildExecutionPrompt(task, dependencies),
+        content: [await options.loadMemory?.(task, bot), buildExecutionPrompt(task, dependencies)].filter(Boolean).join("\n\n"),
         sessionId,
         signal,
       });

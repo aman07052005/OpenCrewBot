@@ -1,9 +1,11 @@
 // Each bot's memory is one Markdown file: data/workspaces/<botId>/MEMORY.md.
 // You can open and edit it in any editor; the bot reads it at the start of
 // every turn and changes it through two small tools.
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { WORKSPACES_DIR } from "./config";
+import { DATA_DIR, WORKSPACES_DIR } from "./config";
+import { saveMemoryDocument, redactSecrets } from "./memory-store";
+export { redactSecrets } from "./memory-store";
 
 /** How much of MEMORY.md goes into the prompt. The file itself can be longer. */
 export const MEMORY_PROMPT_LIMIT = { lines: 200, bytes: 16 * 1024 };
@@ -23,29 +25,8 @@ export function readMemory(botId: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-const SECRET_PATTERNS: RegExp[] = [
-  /\b(sk|pk|rk|tvly|ak|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{12,}\b/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\b(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/gi,
-];
-
-/** Bots sometimes "helpfully" remember a key they saw. They don't get to keep it. */
-export function redactSecrets(text: string): string {
-  let out = text;
-  for (const pattern of SECRET_PATTERNS) {
-    out = out.replace(pattern, (m) => `«redacted ${m.length} chars»`);
-  }
-  return out;
-}
-
-export function writeMemory(botId: string, content: string): string {
-  const path = memoryPath(botId);
-  const clean = redactSecrets(content);
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, clean, { mode: 0o600 });
-  renameSync(tmp, path);
-  return clean;
+export function writeMemory(botId: string, content: string, actor = "owner", reason = "Update agent Markdown memory"): string {
+  return saveMemoryDocument(DATA_DIR, { scope: "agent", id: botId }, { content, actor, reason }).content;
 }
 
 export function deleteWorkspace(botId: string): void {
@@ -54,7 +35,7 @@ export function deleteWorkspace(botId: string): void {
 
 /** The slice of MEMORY.md that loads into the prompt, and whether it was cut. */
 export function memoryForPrompt(botId: string): { text: string; truncated: boolean } {
-  const full = readMemory(botId);
+  const full = redactSecrets(readMemory(botId));
   let text = full.split("\n").slice(0, MEMORY_PROMPT_LIMIT.lines).join("\n");
   if (Buffer.byteLength(text) > MEMORY_PROMPT_LIMIT.bytes) {
     text = Buffer.from(text).subarray(0, MEMORY_PROMPT_LIMIT.bytes).toString("utf8");
@@ -83,7 +64,7 @@ export function appendMemory(botId: string, note: string, section?: string): str
     const afterHeading = /(^|\n)#[^\n]*$/.test(content);
     content = `${content}${content ? (afterHeading ? "\n\n" : "\n") : ""}${line}`;
   }
-  return writeMemory(botId, `${content}\n`);
+  return writeMemory(botId, `${content}\n`, `agent:${botId}`, "Agent saved a durable note");
 }
 
 export function editMemory(botId: string, find: string, replace: string): { ok: boolean; reason?: string } {
@@ -91,6 +72,6 @@ export function editMemory(botId: string, find: string, replace: string): { ok: 
   const count = content.split(find).length - 1;
   if (!find || count === 0) return { ok: false, reason: "That exact text isn't in MEMORY.md. Read it again and copy the text exactly." };
   if (count > 1) return { ok: false, reason: `That text appears ${count} times. Include more surrounding words so it matches once.` };
-  writeMemory(botId, content.replace(find, replace));
+  writeMemory(botId, content.replace(find, replace), `agent:${botId}`, "Agent corrected or removed a note");
   return { ok: true };
 }
