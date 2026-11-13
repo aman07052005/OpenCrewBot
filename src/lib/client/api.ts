@@ -8,6 +8,8 @@ import type {
   ConversationId,
   ConversationSummary,
   CreateExecutionRunInput,
+  CreateChiefOfStaffRunInput,
+  ChiefOfStaffPlan,
   ExecutionRun,
   ExecutionTask,
   McpServer,
@@ -72,6 +74,10 @@ export const api = {
     call<{ runs: ExecutionRun[] }>(`/api/execution-runs?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}${before ? `&beforeCreatedAt=${encodeURIComponent(before.createdAt)}&beforeId=${encodeURIComponent(before.id)}` : ""}`),
   executionRun: (id: string) => call<{ run: ExecutionRun }>(`/api/execution-runs/${encodeURIComponent(id)}`),
   createExecutionRun: (input: CreateExecutionRunInput) => call<{ run: ExecutionRun }>("/api/execution-runs", { method: "POST", json: input }),
+  planChiefOfStaff: (input: { instruction: string; planningMode: "mock" | "live" }) =>
+    call<{ plan: ChiefOfStaffPlan }>("/api/chief-of-staff/plan", { method: "POST", json: input }),
+  createChiefOfStaffRun: (input: CreateChiefOfStaffRunInput) =>
+    call<{ run: ExecutionRun }>("/api/chief-of-staff/runs", { method: "POST", json: input }),
   startExecutionRun: (id: string) => call<{ run: ExecutionRun }>(`/api/execution-runs/${encodeURIComponent(id)}/start`, { method: "POST" }),
   cancelExecutionRun: (id: string) => call<{ run: ExecutionRun }>(`/api/execution-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   approveExecutionTask: (runId: string, taskId: string) =>

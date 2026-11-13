@@ -5,6 +5,15 @@ import { executionTaskExecutor } from "./execution-adapter";
 import { InputError } from "./errors";
 import { db, listBots } from "./db";
 import { configuredExecutionMode, keys } from "./config";
+import {
+  ChiefOfStaffRequestSchema,
+  CreateChiefOfStaffRunSchema,
+  discoverAgentCapabilities,
+  planChiefOfStaff,
+  toExecutionRunInput,
+  validateChiefOfStaffPlan,
+} from "./chief-of-staff";
+import { createLiveChiefOfStaffPlanGenerator } from "./chief-of-staff-model";
 
 function engineError(error: unknown): never {
   throw new InputError(error instanceof Error ? error.message : "Invalid execution request.");
@@ -20,6 +29,47 @@ export async function createRun(input: CreateExecutionRunInput) {
     return await createExecutionRun(await db(), { ...input, executionMode });
   } catch (error) {
     return engineError(error);
+  }
+}
+
+export async function planChiefOfStaffRequest(input: unknown) {
+  let request: ReturnType<typeof ChiefOfStaffRequestSchema.parse>;
+  try {
+    request = ChiefOfStaffRequestSchema.parse(input);
+  } catch (error) {
+    throw new InputError(error instanceof Error ? error.message : "Invalid Chief of Staff request.");
+  }
+  if (request.planningMode === "live" && !keys.nebius()) {
+    throw new InputError("Live planning requires NEBIUS_API_KEY. Select mock planning for a deterministic development plan; no fallback is performed.");
+  }
+  try {
+    const agents = discoverAgentCapabilities(await listBots(), { tavilyAvailable: keys.tavily() });
+    const plan = await planChiefOfStaff(request, {
+      agents,
+      generateLivePlan: request.planningMode === "live" ? createLiveChiefOfStaffPlanGenerator() : undefined,
+    });
+    return { plan };
+  } catch (error) {
+    throw new InputError(error instanceof Error ? error.message : "Chief of Staff planning failed.");
+  }
+}
+
+export async function createChiefOfStaffRun(input: unknown) {
+  let request: ReturnType<typeof CreateChiefOfStaffRunSchema.parse>;
+  try {
+    request = CreateChiefOfStaffRunSchema.parse(input);
+  } catch (error) {
+    throw new InputError(error instanceof Error ? error.message : "Invalid Chief of Staff run request.");
+  }
+  if (request.plan.planningMode !== request.planningMode) throw new InputError("Planning mode does not match the generated plan.");
+  const bots = await listBots();
+  try {
+    validateChiefOfStaffPlan(request.plan, bots.map((bot) => bot.id));
+    const executionInput = toExecutionRunInput(request);
+    return await createRun(executionInput);
+  } catch (error) {
+    if (error instanceof InputError) throw error;
+    throw new InputError(error instanceof Error ? error.message : "The Chief of Staff plan could not be saved.");
   }
 }
 

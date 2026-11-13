@@ -11,7 +11,7 @@ import { migrateExecutionSchema } from "./execution-schema";
 const g = globalThis as unknown as { __opencrewbotDb?: { url: string; schema?: number; client: Promise<Client> } };
 
 /** Bump when a table is added, so a hot-reloaded server re-runs the CREATE statements. */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 async function open(): Promise<Client> {
   const db = createClient({ url: APP_DB_URL });

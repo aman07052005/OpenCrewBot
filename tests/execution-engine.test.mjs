@@ -62,7 +62,7 @@ test("additive migration preserves existing application tables and is idempotent
   assert.ok(names.has("execution_runs"));
   assert.ok(names.has("execution_tasks"));
   assert.ok(names.has("execution_task_dependencies"));
-  assert.equal((await f.client.execute("SELECT COUNT(*) AS n FROM schema_migrations")).rows[0].n, 2);
+  assert.equal((await f.client.execute("SELECT COUNT(*) AS n FROM schema_migrations")).rows[0].n, 3);
 });
 
 test("creation validates circular, missing, and duplicate dependencies", async (t) => {

@@ -1,11 +1,11 @@
 "use client";
 
 import clsx from "clsx";
-import { Activity, ArrowLeft, Check, Clock3, Plus, RefreshCw, X } from "lucide-react";
+import { Activity, ArrowLeft, Check, Clock3, Plus, RefreshCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "@/lib/client/api";
 import { executionOutputKind, executionProgress } from "@/lib/client/execution-dashboard";
-import type { Bot, CreateExecutionRunInput, ExecutionMode, ExecutionRun, ExecutionRunStatus, ExecutionTask, ExecutionTaskInput } from "@/lib/shared/types";
+import type { Bot, ChiefOfStaffPlan, ChiefOfStaffTask, CreateChiefOfStaffRunInput, CreateExecutionRunInput, ExecutionMode, ExecutionRun, ExecutionRunStatus, ExecutionTask, ExecutionTaskInput } from "@/lib/shared/types";
 import { useApp } from "./OpenCrewBotApp";
 import { Button, Drawer, Field, inputClass, Segmented, Toggle } from "./ui";
 
@@ -83,6 +83,7 @@ export function ExecutionDashboard() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showChiefOfStaff, setShowChiefOfStaff] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -177,6 +178,16 @@ export function ExecutionDashboard() {
     toast("Execution run created.");
   };
 
+  const createChiefOfStaffRun = async (input: CreateChiefOfStaffRunInput) => {
+    const result = await api.createChiefOfStaffRun(input);
+    setRuns((current) => [result.run, ...current.filter((run) => run.id !== result.run.id)]);
+    setSelectedId(result.run.id);
+    setDetailError(null);
+    setShowChiefOfStaff(false);
+    setRefreshVersion((version) => version + 1);
+    toast("Chief of Staff execution run created.");
+  };
+
   const loadOlder = async () => {
     if (loadingOlder) return;
     setLoadingOlder(true);
@@ -207,6 +218,7 @@ export function ExecutionDashboard() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setRefreshVersion((version) => version + 1)} title="Refresh executions"><RefreshCw size={14} /> Refresh</Button>
+          <Button variant="ghost" size="sm" onClick={() => setShowChiefOfStaff(true)}><Sparkles size={14} /> Plan with Chief of Staff</Button>
           <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}><Plus size={15} /> New run</Button>
         </div>
       </header>
@@ -258,6 +270,7 @@ export function ExecutionDashboard() {
       </div>
 
       {showCreate && <CreateRunDrawer bots={state.bots} onClose={() => setShowCreate(false)} onCreate={createRun} />}
+      {showChiefOfStaff && <ChiefOfStaffDrawer bots={state.bots} onClose={() => setShowChiefOfStaff(false)} onCreate={createChiefOfStaffRun} />}
     </section>
   );
 }
@@ -307,6 +320,8 @@ function RunDetail({
         <Metric label="Started" value={time(run.startedAt)} />
         <Metric label="Finished" value={time(run.finishedAt)} />
       </div>
+      {run.originalInstruction && <JsonSection title="Original business instruction" value={run.originalInstruction} />}
+      {run.planningRationale && <JsonSection title={`Chief of Staff planning rationale · ${run.planningMode ?? "unknown"} mode`} value={run.planningRationale} />}
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#333]"><div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${progress.percent}%` }} /></div>
 
       {run.status === "running" && <p className="mt-4 rounded-xl bg-accent-soft px-3.5 py-3 text-[12px] leading-relaxed text-[#a9caff]">This run is marked running. If the server has restarted, recovery will resolve interrupted tasks and this view will update automatically.</p>}
@@ -451,6 +466,180 @@ function CreateRunDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose: ()
         </div>
         {error && <p role="alert" className="rounded-xl bg-danger-soft px-3 py-2.5 text-[12px] text-danger">{error}</p>}
       </form>
+    </Drawer>
+  );
+}
+
+function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose: () => void; onCreate: (input: CreateChiefOfStaffRunInput) => Promise<void> }) {
+  const [instruction, setInstruction] = useState("");
+  const [name, setName] = useState("");
+  const [planningMode, setPlanningMode] = useState<ExecutionMode>("mock");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("mock");
+  const [concurrency, setConcurrency] = useState("3");
+  const [plan, setPlan] = useState<ChiefOfStaffPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const updateTask = (key: string, patch: Partial<ChiefOfStaffTask>) => {
+    setPlan((current) => current ? {
+      ...current,
+      tasks: current.tasks.map((task) => task.key === key ? { ...task, ...patch } : task),
+    } : current);
+  };
+
+  const toggleDependency = (task: ChiefOfStaffTask, dependencyKey: string, checked: boolean) => {
+    if (task.isFinalConsolidation) return;
+    updateTask(task.key, {
+      dependsOn: checked
+        ? [...task.dependsOn, dependencyKey]
+        : task.dependsOn.filter((key) => key !== dependencyKey),
+    });
+  };
+
+  const addTask = () => {
+    setPlan((current) => {
+      if (!current || current.tasks.length >= 20) return current;
+      const finalTask = current.tasks.at(-1)!;
+      const task: ChiefOfStaffTask = {
+        key: newTaskKey(),
+        title: "",
+        instructions: "",
+        agentId: bots[0]?.id ?? "",
+        dependsOn: [],
+        rationale: "Added during plan review.",
+        isFinalConsolidation: false,
+      };
+      return { ...current, tasks: [...current.tasks.slice(0, -1), task, { ...finalTask, dependsOn: [...current.tasks.slice(0, -1).map((item) => item.key), task.key] }] };
+    });
+  };
+
+  const removeTask = (task: ChiefOfStaffTask) => {
+    if (task.isFinalConsolidation) return;
+    setPlan((current) => {
+      if (!current || current.tasks.filter((item) => !item.isFinalConsolidation).length <= 1) return current;
+      const remaining = current.tasks.filter((item) => item.key !== task.key && !item.isFinalConsolidation);
+      const finalTask = current.tasks.at(-1)!;
+      const safeTasks = remaining.map((item) => ({ ...item, dependsOn: item.dependsOn.filter((key) => key !== task.key) }));
+      return { ...current, tasks: [...safeTasks, { ...finalTask, dependsOn: safeTasks.map((item) => item.key) }] };
+    });
+  };
+
+  const generatePlan = async () => {
+    setError(null);
+    if (!instruction.trim()) return setError("Enter the business instruction you want the agents to complete.");
+    if (!bots.length) return setError("Create an agent before asking the Chief of Staff to plan work.");
+    setPlanning(true);
+    setPlan(null);
+    try {
+      const result = await api.planChiefOfStaff({ instruction: instruction.trim(), planningMode });
+      setPlan(result.plan);
+      if (!name.trim()) setName(instruction.trim().replace(/\s+/g, " ").slice(0, 80));
+    } catch (planError) {
+      setError(planError instanceof Error ? planError.message : "Chief of Staff planning failed.");
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const createRun = async () => {
+    setError(null);
+    if (!plan) return setError("Generate a plan before creating an execution run.");
+    if (plan.planningMode !== planningMode) return setError("Generate a new plan after changing the planning mode.");
+    if (!instruction.trim()) return setError("The original business instruction is required.");
+    if (!plan.tasks.every((task) => task.title.trim() && task.instructions.trim() && task.agentId)) return setError("Complete each task title, instruction, and agent assignment.");
+    const concurrencyLimit = Number(concurrency);
+    if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1 || concurrencyLimit > 32) return setError("Concurrency must be between 1 and 32.");
+    setSaving(true);
+    try {
+      await onCreate({
+        name: name.trim() || instruction.trim().replace(/\s+/g, " ").slice(0, 80),
+        concurrencyLimit,
+        executionMode,
+        originalInstruction: instruction.trim(),
+        planningMode,
+        plan,
+      });
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Couldn't create the Chief of Staff run.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const workTasks = plan?.tasks.filter((task) => !task.isFinalConsolidation) ?? [];
+
+  return (
+    <Drawer
+      title="Plan with Chief of Staff"
+      onClose={onClose}
+      footer={<>
+        <Button onClick={onClose} disabled={planning || saving}>Close</Button>
+        {plan && <Button variant="primary" onClick={() => void createRun()} disabled={planning || saving}>{saving ? "Creating…" : "Create execution run"}</Button>}
+      </>}
+    >
+      <div className="space-y-5">
+        <Field label="Business instruction" hint="Describe the outcome, audience, constraints, and desired format. The original text is saved with the run.">
+          <textarea className={clsx(inputClass, "min-h-32 resize-y")} value={instruction} onChange={(event) => { setInstruction(event.target.value); setPlan(null); }} maxLength={12_000} placeholder="What should your team of agents accomplish?" />
+        </Field>
+        <div className="space-y-2">
+          <p className="text-[12px] font-medium text-mute">Planning mode</p>
+          <Segmented value={planningMode} onChange={(mode) => { setPlanningMode(mode); setPlan(null); }} options={[
+            { value: "mock", label: "MOCK · DETERMINISTIC", hint: "Development planner; no model call." },
+            { value: "live", label: "LIVE MODEL", hint: "Uses the configured planner model." },
+          ]} />
+          {planningMode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Live planning calls the configured model and may incur a charge. It requires NEBIUS_API_KEY. If the call fails, no mock plan is substituted.</p>}
+        </div>
+        <Button variant="primary" onClick={() => void generatePlan()} disabled={planning || saving || !bots.length}><Sparkles size={14} /> {planning ? "Planning…" : plan ? "Generate plan again" : "Generate plan"}</Button>
+
+        {plan && <>
+          <div className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] font-semibold leading-relaxed text-warn">{plan.planningLabel}</div>
+          <div className="rounded-xl bg-raised p-3.5 ring-1 ring-line">
+            <p className="text-[11px] font-semibold tracking-wide text-mute uppercase">Planning rationale</p>
+            <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-ink">{plan.rationale}</p>
+          </div>
+          <Field label="Execution run name"><input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} maxLength={300} placeholder="Name this execution run" /></Field>
+          <div className="space-y-2">
+            <p className="text-[12px] font-medium text-mute">Task execution mode</p>
+            <Segmented value={executionMode} onChange={setExecutionMode} options={[
+              { value: "mock", label: "MOCK · SIMULATED", hint: "Deterministic outputs; no task model call." },
+              { value: "live", label: "LIVE MODEL", hint: "Uses each assigned agent's configured model." },
+            ]} />
+            {executionMode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Starting this run uses the configured model for each assigned agent. Execution tasks only receive the existing read-only tool allowlist; this plan does not grant tools or approvals.</p>}
+          </div>
+          <Field label="Maximum concurrent tasks"><input className={inputClass} type="number" min={1} max={32} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} /></Field>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-[13px] font-semibold">Plan preview <span className="ml-1 text-mute">{plan.tasks.length} tasks</span></h3>
+              <Button size="sm" onClick={addTask} disabled={plan.tasks.length >= 20}><Plus size={13} /> Add task</Button>
+            </div>
+            {plan.tasks.map((task, index) => (
+              <fieldset key={task.key} className="space-y-3 rounded-2xl bg-raised p-3.5 ring-1 ring-line">
+                <div className="flex items-center justify-between gap-2">
+                  <legend className="text-[12px] font-semibold">{task.isFinalConsolidation ? "Final consolidation" : `Task ${index + 1}`}</legend>
+                  {!task.isFinalConsolidation && workTasks.length > 1 && <button type="button" onClick={() => removeTask(task)} className="text-[11px] text-danger hover:underline">Remove</button>}
+                </div>
+                <Field label="Task title"><input className={inputClass} value={task.title} onChange={(event) => updateTask(task.key, { title: event.target.value })} maxLength={300} /></Field>
+                <Field label="Assigned agent"><select className={inputClass} value={task.agentId} onChange={(event) => updateTask(task.key, { agentId: event.target.value })}><option value="">Choose an existing agent</option>{bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} · {bot.title || bot.model}</option>)}</select></Field>
+                <Field label="Task instructions"><textarea className={clsx(inputClass, "min-h-24 resize-y")} value={task.instructions} onChange={(event) => updateTask(task.key, { instructions: event.target.value })} maxLength={8_000} /></Field>
+                <div>
+                  <p className="mb-1.5 text-[12px] font-medium text-mute">Dependencies</p>
+                  {task.isFinalConsolidation ? (
+                    <div className="space-y-1 text-[11px] text-mute">{workTasks.map((candidate) => <p key={candidate.key}>• {candidate.title.trim() || "Untitled task"}</p>)}<p className="mt-2 text-faint">Final consolidation receives every work task output.</p></div>
+                  ) : (
+                    <div className="space-y-1">
+                      {workTasks.filter((candidate) => candidate.key !== task.key).map((candidate) => <label key={candidate.key} className="flex items-center gap-2 text-[11px] text-mute"><input type="checkbox" checked={task.dependsOn.includes(candidate.key)} onChange={(event) => toggleDependency(task, candidate.key, event.target.checked)} />{candidate.title.trim() || "Untitled task"}</label>)}
+                      {!workTasks.some((candidate) => candidate.key !== task.key) && <p className="text-[11px] text-faint">No other work tasks.</p>}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl bg-[#1a1a1a] px-3 py-2.5"><p className="text-[10px] font-semibold tracking-wide text-faint uppercase">Assignment rationale</p><p className="mt-1 text-[11px] leading-relaxed text-mute">{task.rationale}</p></div>
+              </fieldset>
+            ))}
+          </div>
+        </>}
+        {error && <p role="alert" className="rounded-xl bg-danger-soft px-3 py-2.5 text-[12px] text-danger">{error}</p>}
+      </div>
     </Drawer>
   );
 }

@@ -68,4 +68,17 @@ export async function migrateExecutionSchema(client: Client): Promise<void> {
       "write",
     );
   }
+
+  const afterMode = await client.execute("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations");
+  if (Number(afterMode.rows[0]?.version ?? 0) < 3) {
+    await client.batch(
+      [
+        "ALTER TABLE execution_runs ADD COLUMN original_instruction TEXT",
+        "ALTER TABLE execution_runs ADD COLUMN planning_rationale TEXT",
+        "ALTER TABLE execution_runs ADD COLUMN planning_mode TEXT CHECK (planning_mode IS NULL OR planning_mode IN ('mock','live'))",
+        { sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?) ON CONFLICT(version) DO NOTHING", args: [new Date().toISOString()] },
+      ],
+      "write",
+    );
+  }
 }

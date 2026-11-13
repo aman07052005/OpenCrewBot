@@ -35,7 +35,7 @@ function json(value: unknown): unknown {
 }
 function isoNow(): string { return new Date().toISOString(); }
 
-function validate(input: CreateExecutionRunInput): void {
+export function validateExecutionRunInput(input: CreateExecutionRunInput): void {
   if (!input || typeof input.name !== "string" || !input.name.trim() || input.name.length > MAX_TITLE_LENGTH) throw new Error("Run name must be 1–300 characters.");
   const concurrency = input.concurrencyLimit ?? 3;
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) throw new Error("Concurrency limit must be between 1 and 32.");
@@ -70,6 +70,13 @@ function validate(input: CreateExecutionRunInput): void {
     visited.add(key);
   };
   for (const task of input.tasks) visit(task.key);
+  if (input.originalInstruction !== undefined && (typeof input.originalInstruction !== "string" || !input.originalInstruction.trim() || input.originalInstruction.length > 12_000)) {
+    throw new Error("Original instruction must be 1–12000 characters.");
+  }
+  if (input.planningRationale !== undefined && (typeof input.planningRationale !== "string" || !input.planningRationale.trim() || input.planningRationale.length > 8_000)) {
+    throw new Error("Planning rationale must be 1–8000 characters.");
+  }
+  if (input.planningMode !== undefined && input.planningMode !== "mock" && input.planningMode !== "live") throw new Error("planningMode must be 'mock' or 'live'.");
 }
 
 function runFrom(row: Record<string, unknown>): ExecutionRun {
@@ -78,6 +85,9 @@ function runFrom(row: Record<string, unknown>): ExecutionRun {
     concurrencyLimit: number(row.concurrency_limit), createdAt: str(row.created_at), updatedAt: str(row.updated_at),
     startedAt: nullable(row.started_at), finishedAt: nullable(row.finished_at), error: nullable(row.error),
     executionMode: str(row.execution_mode ?? "mock") as ExecutionMode,
+    originalInstruction: nullable(row.original_instruction),
+    planningRationale: nullable(row.planning_rationale),
+    planningMode: row.planning_mode === null || row.planning_mode === undefined ? null : str(row.planning_mode) as ExecutionMode,
   };
 }
 
@@ -107,12 +117,12 @@ async function dependencyOutputsFor(client: Client, taskId: string): Promise<Exe
 }
 
 export async function createExecutionRun(client: Client, input: CreateExecutionRunInput): Promise<ExecutionRun> {
-  validate(input);
+  validateExecutionRunInput(input);
   const id = randomUUID();
   const now = isoNow();
   const idsByKey = new Map(input.tasks.map((task) => [task.key, randomUUID()]));
   const statements: InStatement[] = [
-    { sql: "INSERT INTO execution_runs (id,name,status,concurrency_limit,execution_mode,created_at,updated_at) VALUES (?,?, 'pending',?,?,?,?)", args: [id, input.name.trim(), input.concurrencyLimit ?? 3, input.executionMode ?? "mock", now, now] },
+    { sql: "INSERT INTO execution_runs (id,name,status,concurrency_limit,execution_mode,original_instruction,planning_rationale,planning_mode,created_at,updated_at) VALUES (?,?, 'pending',?,?,?,?,?,?,?)", args: [id, input.name.trim(), input.concurrencyLimit ?? 3, input.executionMode ?? "mock", input.originalInstruction ?? null, input.planningRationale ?? null, input.planningMode ?? null, now, now] },
   ];
   for (const task of input.tasks) {
     const taskId = idsByKey.get(task.key)!;

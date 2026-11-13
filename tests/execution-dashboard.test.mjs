@@ -52,6 +52,15 @@ test("execution API client uses only the local execution routes and sends explic
     await api.executionRuns(100, 0, { createdAt: "2026-11-13T00:00:00Z", id: "run-older" });
     await api.executionRun("run / one");
     await api.createExecutionRun({ name: "Example", executionMode: "mock", concurrencyLimit: 2, tasks: [{ key: "one", title: "Task", agentId: "bot-1", input: "Instructions" }] });
+    await api.planChiefOfStaff({ instruction: "Prepare a general business brief", planningMode: "mock" });
+    await api.createChiefOfStaffRun({
+      name: "Business brief",
+      concurrencyLimit: 2,
+      executionMode: "mock",
+      originalInstruction: "Prepare a general business brief",
+      planningMode: "mock",
+      plan: { rationale: "Deterministic mock.", planningMode: "mock", planningLabel: "MOCK", tasks: [] },
+    });
     await api.startExecutionRun("run-1");
     await api.cancelExecutionRun("run-1");
     await api.approveExecutionTask("run-1", "task-1");
@@ -65,10 +74,14 @@ test("execution API client uses only the local execution routes and sends explic
     ["/api/execution-runs?limit=100&offset=0&beforeCreatedAt=2026-11-13T00%3A00%3A00Z&beforeId=run-older", "GET"],
     ["/api/execution-runs/run%20%2F%20one", "GET"],
     ["/api/execution-runs", "POST"],
+    ["/api/chief-of-staff/plan", "POST"],
+    ["/api/chief-of-staff/runs", "POST"],
     ["/api/execution-runs/run-1/start", "POST"],
     ["/api/execution-runs/run-1/cancel", "POST"],
     ["/api/execution-runs/run-1/tasks/task-1/approve", "POST"],
     ["/api/execution-runs/run-1/tasks/task-1/reject", "POST"],
   ]);
   assert.equal(requests[3].body.executionMode, "mock");
+  assert.equal(requests[4].body.planningMode, "mock");
+  assert.equal(requests[5].body.originalInstruction, "Prepare a general business brief");
 });

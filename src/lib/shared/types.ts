@@ -150,6 +150,10 @@ export interface CreateExecutionRunInput {
   name: string;
   concurrencyLimit?: number;
   executionMode?: ExecutionMode;
+  /** Set only for a persisted Chief of Staff run. */
+  originalInstruction?: string;
+  planningRationale?: string;
+  planningMode?: ExecutionMode;
   tasks: ExecutionTaskInput[];
 }
 
@@ -194,10 +198,39 @@ export interface ExecutionRun {
   finishedAt: string | null;
   error: string | null;
   executionMode: ExecutionMode;
+  originalInstruction?: string | null;
+  planningRationale?: string | null;
+  planningMode?: ExecutionMode | null;
   tasks?: ExecutionTask[];
   /** Included on run-list responses for a compact progress summary. */
   taskCount?: number;
   taskCounts?: ExecutionTaskCounts;
+}
+
+export interface ChiefOfStaffTask {
+  key: string;
+  title: string;
+  instructions: string;
+  agentId: string;
+  dependsOn: string[];
+  rationale: string;
+  isFinalConsolidation: boolean;
+}
+
+export interface ChiefOfStaffPlan {
+  rationale: string;
+  tasks: ChiefOfStaffTask[];
+  planningMode: ExecutionMode;
+  planningLabel: string;
+}
+
+export interface CreateChiefOfStaffRunInput {
+  name: string;
+  concurrencyLimit: number;
+  executionMode: ExecutionMode;
+  originalInstruction: string;
+  planningMode: ExecutionMode;
+  plan: ChiefOfStaffPlan;
 }
 
 /** Events the server pushes to the browser over one SSE stream. */
