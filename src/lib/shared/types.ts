@@ -30,11 +30,33 @@ export interface Bot {
   /** Connection ids this bot may use: `composio:<toolkit>` or `mcp:<serverId>`. */
   connections: string[];
   approval: ApprovalMode;
+  /** Optional Agent Factory metadata. Older/manual bot records remain valid without it. */
+  agentConfig?: AgentFactoryMetadata;
   pinned: boolean;
   createdAt: string;
 }
 
+export type AgentFactoryGenerationMode = "mock" | "live" | "template";
+
+/** Extensible metadata for future skill and memory runtimes; skills are descriptive tags today. */
+export interface AgentFactoryMetadata {
+  source: "factory" | "template";
+  generationMode: AgentFactoryGenerationMode;
+  templateId?: string;
+  creationRequest: string;
+  skillIds: string[];
+  memory: { enabled: boolean; storage: "markdown" };
+  expectedOutputFormat: string;
+}
+
 export type BotInput = Omit<Bot, "id" | "createdAt" | "handle" | "connections"> & { handle?: string; connections?: string[] };
+
+/** Editable JSON configuration returned by the Agent Factory preview. */
+export interface AgentFactoryDraft extends BotInput {
+  handle: string;
+  agentConfig: AgentFactoryMetadata;
+  generationLabel: string;
+}
 
 export type RoomResponder = "auto" | "lead" | "everyone";
 

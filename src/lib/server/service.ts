@@ -14,6 +14,8 @@ import { messagePreview } from "@/lib/shared/preview";
 import { roomConversationId, runRoom } from "./rooms";
 import { recoverExecutionRuns } from "./execution-engine";
 import { executionTaskExecutor } from "./execution-adapter";
+import { AgentFactoryMetadataSchema, AgentToolsSchema } from "./agent-factory";
+import { createBotRecord } from "./bot-creation";
 
 export { InputError };
 
@@ -117,23 +119,30 @@ async function uniqueHandle(wanted: string, exceptId?: string): Promise<string> 
 function validateBot(input: Partial<BotInput>) {
   if (input.name !== undefined && !input.name.trim()) throw new InputError("A bot needs a name.");
   if (input.name && input.name.length > 40) throw new InputError("Keep the name under 40 characters.");
+  if (input.title !== undefined && (typeof input.title !== "string" || input.title.length > 40)) throw new InputError("Keep the role under 40 characters.");
+  if (input.description !== undefined && (typeof input.description !== "string" || input.description.length > 200)) throw new InputError("Keep the description under 200 characters.");
   if (input.instructions && input.instructions.length > 8000) throw new InputError("Instructions are limited to 8,000 characters.");
+  if (input.model !== undefined && (typeof input.model !== "string" || !input.model.trim() || input.model.length > 200)) throw new InputError("Choose a valid model ID.");
+  if (input.approval !== undefined && input.approval !== "ask" && input.approval !== "full") throw new InputError("Permission level must be Ask First or Full access.");
+  if (input.tools !== undefined) {
+    const tools = AgentToolsSchema.safeParse(input.tools);
+    if (!tools.success) throw new InputError("Tool settings must use the supported OpenCrewBot tools.");
+  }
+  if (input.agentConfig !== undefined) {
+    const agentConfig = AgentFactoryMetadataSchema.safeParse(input.agentConfig);
+    if (!agentConfig.success) throw new InputError("Agent Factory metadata is invalid.");
+    if (input.tools && agentConfig.data.memory.enabled !== input.tools.memory) throw new InputError("Memory metadata must match the Memory tool setting.");
+  }
 }
 
 export async function createBot(input: BotInput): Promise<Bot> {
   validateBot(input);
-  const bot: Bot = {
-    ...input,
-    id: randomUUID().slice(0, 8),
-    name: input.name.trim(),
-    connections: input.connections ?? [],
-    handle: await uniqueHandle(input.handle || input.name),
-    createdAt: new Date().toISOString(),
-  };
-  await store.saveBot(bot);
-  writeMemory(bot.id, `# ${bot.name}'s memory\n\n`);
-  publish({ type: "bots-changed" });
-  return bot;
+  return createBotRecord(input, {
+    listBots: store.listBots,
+    saveBot: store.saveBot,
+    writeMemory,
+    publishBotsChanged: () => publish({ type: "bots-changed" }),
+  });
 }
 
 export async function updateBot(id: string, patch: Partial<BotInput>): Promise<Bot> {
@@ -148,6 +157,7 @@ export async function updateBot(id: string, patch: Partial<BotInput>): Promise<B
     tools: { ...bot.tools, ...(patch.tools ?? {}) },
     handle: patch.handle !== undefined || patch.name !== undefined ? await uniqueHandle(patch.handle || patch.name || bot.handle, id) : bot.handle,
   };
+  validateBot(next);
   await store.saveBot(next);
   await resetBot(id);
   publish({ type: "bots-changed" });

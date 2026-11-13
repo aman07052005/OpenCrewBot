@@ -8,6 +8,7 @@ import type { Bot, BotInput } from "@/lib/shared/types";
 import { useApp } from "./OpenCrewBotApp";
 import { ModelPicker } from "./ModelPicker";
 import { Button, Drawer, Field, Mascot, Segmented, Toggle, inputClass } from "./ui";
+import { AgentFactoryForm } from "./AgentFactoryForm";
 
 export const BOT_COLORS = ["#3b82f6", "#f59e0b", "#ec4899", "#22c55e", "#8b5cf6", "#14b8a6", "#ef4444", "#eab308", "#f4f4f4"];
 
@@ -61,7 +62,11 @@ export function BotForm({ bot, onDone }: { bot?: Bot; onDone?: (bot: Bot) => voi
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   const set = <K extends keyof BotInput>(k: K, v: BotInput[K]) => setForm((f) => ({ ...f, [k]: v }));
-  const setTool = (k: keyof BotInput["tools"], v: boolean) => setForm((f) => ({ ...f, tools: { ...f.tools, [k]: v } }));
+  const setTool = (k: keyof BotInput["tools"], v: boolean) => setForm((f) => ({
+    ...f,
+    tools: { ...f.tools, [k]: v },
+    ...(k === "memory" && f.agentConfig ? { agentConfig: { ...f.agentConfig, memory: { ...f.agentConfig.memory, enabled: v } } } : {}),
+  }));
 
   const save = async () => {
     setSaving(true);
@@ -219,9 +224,20 @@ export function BotForm({ bot, onDone }: { bot?: Bot; onDone?: (bot: Bot) => voi
 }
 
 export function NewBotDrawer({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"factory" | "manual">("factory");
   return (
     <Drawer title="New bot" onClose={onClose}>
-      <BotForm onDone={onClose} />
+      <div className="mb-4">
+        <Segmented
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "factory", label: "Agent Factory", hint: "Describe an agent in plain English." },
+            { value: "manual", label: "Manual setup", hint: "Fill every field yourself." },
+          ]}
+        />
+      </div>
+      {mode === "factory" ? <AgentFactoryForm onDone={onClose} /> : <BotForm onDone={onClose} />}
     </Drawer>
   );
 }

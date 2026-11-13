@@ -10,6 +10,8 @@ import type {
   CreateExecutionRunInput,
   CreateChiefOfStaffRunInput,
   ChiefOfStaffPlan,
+  AgentFactoryDraft,
+  AgentFactoryGenerationMode,
   ExecutionRun,
   ExecutionTask,
   McpServer,
@@ -47,6 +49,12 @@ export const api = {
   createBot: (input: BotInput) => call<{ bot: Bot }>("/api/bots", { method: "POST", json: input }),
   updateBot: (id: string, patch: Partial<BotInput>) => call<{ bot: Bot }>(`/api/bots/${id}`, { method: "PATCH", json: patch }),
   deleteBot: (id: string) => call(`/api/bots/${id}`, { method: "DELETE" }),
+  generateFactoryAgent: (input: { description: string; generationMode: Exclude<AgentFactoryGenerationMode, "template"> }) =>
+    call<{ draft: AgentFactoryDraft }>("/api/agent-factory/generate", { method: "POST", json: input }),
+  createFactoryAgent: (draft: AgentFactoryDraft) =>
+    call<{ bot: Bot }>("/api/agent-factory/create", { method: "POST", json: { draft } }),
+  installWorkforceTemplates: () =>
+    call<{ installed: string[]; alreadyInstalled: string[]; conflicts: Array<{ templateId: string; agentName: string }> }>("/api/agent-factory/templates/install", { method: "POST" }),
   getMemory: (id: string) => call<{ content: string; path: string; limit: { lines: number; bytes: number } }>(`/api/bots/${id}/memory`),
   saveMemory: (id: string, content: string) => call<{ content: string }>(`/api/bots/${id}/memory`, { method: "PUT", json: { content } }),
   createRoom: (input: RoomInput) => call<{ room: Room }>("/api/rooms", { method: "POST", json: input }),

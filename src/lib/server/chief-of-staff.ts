@@ -62,6 +62,9 @@ export type AgentCapability = {
   availableDuringExecution: string[];
   unavailableDuringExecution: string[];
   connectedServices: string[];
+  skillIds: string[];
+  skillsAreMetadataOnly: boolean;
+  expectedOutputFormat: string;
 };
 
 export type LivePlanGenerator = (input: {
@@ -119,6 +122,9 @@ export function discoverAgentCapabilities(bots: Bot[], options: { tavilyAvailabl
       availableDuringExecution,
       unavailableDuringExecution,
       connectedServices: [...(bot.connections ?? [])],
+      skillIds: [...(bot.agentConfig?.skillIds ?? [])],
+      skillsAreMetadataOnly: true,
+      expectedOutputFormat: bot.agentConfig?.expectedOutputFormat ?? "",
     };
   });
 }
