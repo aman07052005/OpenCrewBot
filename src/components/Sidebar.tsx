@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Activity, ClipboardCheck, NotebookPen, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, Wrench, X } from "lucide-react";
+import { Activity, CalendarClock, ClipboardCheck, NotebookPen, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client/api";
 import { timeLabel } from "@/lib/client/format";
@@ -204,7 +204,7 @@ function SidebarFooter() {
 }
 
 export function Sidebar() {
-  const { state, openExecutions, openSkills, openApprovals, setPanel, setSidebarOpen } = useApp();
+  const { state, openExecutions, openSkills, openApprovals, openSchedules, setPanel, setSidebarOpen } = useApp();
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
@@ -284,6 +284,7 @@ export function Sidebar() {
         <Wrench size={17} /> Skills manager
       </button>
       <button onClick={openApprovals} aria-current={state.view === "approvals" ? "page" : undefined} className={clsx("mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium transition-colors", state.view === "approvals" ? "bg-active text-ink" : "text-mute hover:bg-hover hover:text-ink")}><ClipboardCheck size={17} /> Approvals</button>
+      <button onClick={openSchedules} aria-current={state.view === "schedules" ? "page" : undefined} className={clsx("mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium transition-colors", state.view === "schedules" ? "bg-active text-ink" : "text-mute hover:bg-hover hover:text-ink")}><CalendarClock size={17} /> Schedules</button>
 
       <button onClick={() => setPanel({ kind: "memory" })} className="mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium text-mute hover:bg-hover hover:text-ink"><NotebookPen size={17} /> Memory manager</button>
 

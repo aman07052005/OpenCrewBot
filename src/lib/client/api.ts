@@ -21,6 +21,9 @@ import type {
   ModelOption,
   Room,
   RoomInput,
+  CreateScheduledWorkflowInput,
+  ScheduledWorkflow,
+  ScheduledWorkflowOccurrence,
 } from "@/lib/shared/types";
 
 async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -117,4 +120,9 @@ export const api = {
   inspectMcpTools: (id: string) => call<{ tools: Array<{ name: string; description: string; inputSchema: unknown; annotations: unknown; enabled: boolean }> }>(`/api/integrations/mcp/${encodeURIComponent(id)}`),
   configureMcpReadTools: (id: string, tools: string[]) => call<{ enabled: string[] }>(`/api/integrations/mcp/${encodeURIComponent(id)}`, { method: "PATCH", json: { tools } }),
   invokeMcpReadTool: (id: string, input: { agentId: string; tool: string; input: unknown }) => call<{ integration: string; serverId: string; tool: string; result: unknown }>(`/api/integrations/mcp/${encodeURIComponent(id)}`, { method: "POST", json: input }),
+  scheduledWorkflows: () => call<{ workflows: ScheduledWorkflow[] }>("/api/scheduled-workflows"),
+  scheduledWorkflow: (id: string) => call<{ workflow: ScheduledWorkflow; occurrences: ScheduledWorkflowOccurrence[] }>(`/api/scheduled-workflows/${encodeURIComponent(id)}`),
+  createScheduledWorkflow: (input: CreateScheduledWorkflowInput) => call<{ workflow: ScheduledWorkflow }>("/api/scheduled-workflows", { method: "POST", json: input }),
+  updateScheduledWorkflow: (id: string, input: Partial<CreateScheduledWorkflowInput & { active: boolean }>) => call<{ workflow: ScheduledWorkflow }>(`/api/scheduled-workflows/${encodeURIComponent(id)}`, { method: "PATCH", json: input }),
+  runScheduledWorkflow: (id: string) => call<{ occurrence: ScheduledWorkflowOccurrence }>(`/api/scheduled-workflows/${encodeURIComponent(id)}/run`, { method: "POST" }),
 };

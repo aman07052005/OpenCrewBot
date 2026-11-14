@@ -234,10 +234,64 @@ export interface ExecutionRun {
   originalInstruction?: string | null;
   planningRationale?: string | null;
   planningMode?: ExecutionMode | null;
+  /** Set when this run was created by a persisted scheduled workflow. */
+  scheduledWorkflowId?: string | null;
+  scheduleTrigger?: "automatic" | "manual" | null;
   tasks?: ExecutionTask[];
   /** Included on run-list responses for a compact progress summary. */
   taskCount?: number;
   taskCounts?: ExecutionTaskCounts;
+}
+
+export type WorkflowSchedule =
+  | { kind: "minutes"; every: number }
+  | { kind: "hours"; every: number }
+  | { kind: "daily"; time: string }
+  | { kind: "weekly"; day: number; time: string };
+
+export type ScheduledWorkflowStatus = "active" | "paused";
+export type ScheduledOccurrenceStatus = "claimed" | "creating" | "started" | "completed" | "failed" | "cancelled";
+
+export interface ScheduledWorkflow {
+  id: string;
+  name: string;
+  description: string;
+  objective: string;
+  plan: CreateExecutionRunInput;
+  agentIds: string[];
+  schedule: WorkflowSchedule;
+  timezone: string;
+  status: ScheduledWorkflowStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastExecutedAt: string | null;
+  nextRunAt: string | null;
+  lastRunStatus: ExecutionRunStatus | null;
+  lastRunId: string | null;
+  lastError: string | null;
+}
+
+export interface ScheduledWorkflowOccurrence {
+  id: string;
+  workflowId: string;
+  trigger: "automatic" | "manual";
+  scheduledFor: string;
+  status: ScheduledOccurrenceStatus;
+  runId: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+export interface CreateScheduledWorkflowInput {
+  name: string;
+  description?: string;
+  objective: string;
+  plan: CreateExecutionRunInput;
+  schedule: WorkflowSchedule;
+  timezone?: string;
+  active?: boolean;
 }
 
 export interface ChiefOfStaffTask {

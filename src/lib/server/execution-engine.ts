@@ -95,6 +95,8 @@ function runFrom(row: Record<string, unknown>): ExecutionRun {
     originalInstruction: nullable(row.original_instruction),
     planningRationale: nullable(row.planning_rationale),
     planningMode: row.planning_mode === null || row.planning_mode === undefined ? null : str(row.planning_mode) as ExecutionMode,
+    scheduledWorkflowId: nullable(row.scheduled_workflow_id),
+    scheduleTrigger: row.schedule_trigger === "automatic" || row.schedule_trigger === "manual" ? row.schedule_trigger : null,
   };
 }
 
