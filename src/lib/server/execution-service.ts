@@ -14,6 +14,7 @@ import {
   validateChiefOfStaffPlan,
 } from "./chief-of-staff";
 import { createLiveChiefOfStaffPlanGenerator } from "./chief-of-staff-model";
+import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
 
 function engineError(error: unknown): never {
   throw new InputError(error instanceof Error ? error.message : "Invalid execution request.");
@@ -21,9 +22,15 @@ function engineError(error: unknown): never {
 
 export async function createRun(input: CreateExecutionRunInput) {
   const executionMode = (input?.executionMode ?? configuredExecutionMode()) as ExecutionMode;
-  const botIds = new Set((await listBots()).map((bot) => bot.id));
+  const bots = await listBots();
+  const botIds = new Set(bots.map((bot) => bot.id));
   for (const task of input?.tasks ?? []) {
     if (!botIds.has(task.agentId)) throw new InputError(`Task ${task.key} refers to an unknown bot: ${task.agentId}.`);
+    if (task.skillId) {
+      if (!EXECUTABLE_SKILL_IDS.includes(task.skillId as never)) throw new InputError(`Task ${task.key} refers to an unknown skill.`);
+      if (!bots.find((bot) => bot.id === task.agentId)?.agentConfig?.skillIds.includes(task.skillId)) throw new InputError(`Task ${task.key} assigns a skill disabled for its agent.`);
+      task.input = { ...(task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : {}), skillId: task.skillId, skillInput: task.skillInput };
+    }
   }
   try {
     return await createExecutionRun(await db(), { ...input, executionMode });

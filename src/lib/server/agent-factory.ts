@@ -168,15 +168,19 @@ function roleFromDescription(description: string): string {
 function skillsForDescription(description: string): AgentSkillId[] {
   const value = description.toLowerCase();
   const matches: Array<[RegExp, AgentSkillId]> = [
-    [/research|source|market|evidence|verify/, "skill.research"],
+    [/competitor|competitive/, "skill.competitor-analysis"],
+    [/research|source|market|evidence|verify/, "skill.market-research"],
     [/analys|interpret|business performance/, "skill.analysis"],
     [/data|spreadsheet|visuali[sz]|calculation/, "skill.data-analysis"],
     [/software|developer|code|repository|engineering/, "skill.software-engineering"],
     [/marketing|campaign|audience|content strategy/, "skill.marketing-strategy"],
+    [/financial|finance|revenue|forecast|business performance/, "skill.financial-modelling"],
     [/financial|finance|revenue|forecast|business performance/, "skill.financial-analysis"],
     [/quality|review|fact|error|check/, "skill.quality-review"],
-    [/write|draft|content|communication/, "skill.writing"],
-    [/plan|strategy|roadmap/, "skill.planning"],
+    [/write|draft|content|communication|email/, "skill.email-drafting"],
+    [/presentation|slides|deck/, "skill.presentation-creation"],
+    [/lead|prospect/, "skill.lead-generation"],
+    [/code review|repository/, "skill.code-review"],
   ];
   return matches.filter(([pattern]) => pattern.test(value)).map(([, id]) => id);
 }

@@ -104,4 +104,5 @@ export const api = {
     call<{ task: ExecutionTask }>(`/api/execution-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/approve`, { method: "POST" }),
   rejectExecutionTask: (runId: string, taskId: string) =>
     call<{ task: ExecutionTask }>(`/api/execution-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/reject`, { method: "POST" }),
+  skills: () => call<{ skills: Array<{ id: string; label: string; description: string; implemented: boolean }> }>("/api/skills"),
 };

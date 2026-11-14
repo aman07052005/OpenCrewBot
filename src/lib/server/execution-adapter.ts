@@ -7,6 +7,8 @@ import { collectSharedMemory, sharedMemoryPrompt, attachMockMemory } from "./mem
 import type { ExecutionTask } from "./execution-engine";
 import type { Bot } from "@/lib/shared/types";
 import { createMastraTaskExecutor } from "./execution-task-executor";
+import { executeSkill } from "./skills.ts";
+import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
 
 async function verifiedRoomId(task: ExecutionTask): Promise<string | undefined> {
   if (!collaborationContext(task.input)) return undefined;
@@ -26,6 +28,14 @@ export function executionTaskExecutor(mode: ExecutionMode): TaskExecutor {
   if (!base) throw new Error(`Unsupported execution mode: ${String(mode)}.`);
   return { retrySafety: base.retrySafety, execute: async (task, context) => {
     const roomId = await verifiedRoomId(task);
+    const input = task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : null;
+    const skillId = input?.skillId;
+    if (typeof skillId === "string") {
+      if (!EXECUTABLE_SKILL_IDS.includes(skillId as never)) throw new Error(`Unknown skill ${skillId}.`);
+      const bot = await getBot(task.agentId);
+      if (!bot?.agentConfig?.skillIds.includes(skillId)) throw new Error(`Assigned agent is not authorized to use ${skillId}.`);
+      return executeSkill(skillId as never, input!.skillInput, mode);
+    }
     const result = await base.execute(task, context);
     if (mode !== "mock") return result;
     const bot = await getBot(task.agentId);

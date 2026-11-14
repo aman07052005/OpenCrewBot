@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Activity, NotebookPen, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, X } from "lucide-react";
+import { Activity, NotebookPen, MoreHorizontal, PanelLeft, Pin, Plug, Plus, Search, Settings, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client/api";
 import { timeLabel } from "@/lib/client/format";
@@ -204,7 +204,7 @@ function SidebarFooter() {
 }
 
 export function Sidebar() {
-  const { state, openExecutions, setPanel, setSidebarOpen } = useApp();
+  const { state, openExecutions, openSkills, setPanel, setSidebarOpen } = useApp();
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
@@ -278,6 +278,10 @@ export function Sidebar() {
       >
         <Activity size={17} />
         Executions
+      </button>
+
+      <button onClick={openSkills} aria-current={state.view === "skills" ? "page" : undefined} className={clsx("mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium transition-colors", state.view === "skills" ? "bg-active text-ink" : "text-mute hover:bg-hover hover:text-ink")}>
+        <Wrench size={17} /> Skills manager
       </button>
 
       <button onClick={() => setPanel({ kind: "memory" })} className="mx-3 mb-2 flex h-10 items-center gap-2.5 rounded-xl px-3 text-left text-[14px] font-medium text-mute hover:bg-hover hover:text-ink"><NotebookPen size={17} /> Memory manager</button>

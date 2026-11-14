@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Bot, ChiefOfStaffPlan, ChiefOfStaffTask, CreateChiefOfStaffRunInput, CreateExecutionRunInput } from "@/lib/shared/types";
 import { validateExecutionRunInput } from "./execution-engine.ts";
+import { skillForObjective } from "./skills.ts";
 
 export const MAX_CHIEF_OF_STAFF_TASKS = 20;
 const MAX_WORK_TASKS = MAX_CHIEF_OF_STAFF_TASKS - 1;
@@ -19,6 +20,7 @@ const TaskSchema = z.object({
   dependsOn: z.array(z.string().min(1).max(80)).max(MAX_CHIEF_OF_STAFF_TASKS),
   rationale: z.string().trim().min(1).max(2_000),
   isFinalConsolidation: z.boolean(),
+  skillId: z.string().optional(),
 }).strict();
 
 export const ChiefOfStaffPlanSchema = z.object({
@@ -123,7 +125,7 @@ export function discoverAgentCapabilities(bots: Bot[], options: { tavilyAvailabl
       unavailableDuringExecution,
       connectedServices: [...(bot.connections ?? [])],
       skillIds: [...(bot.agentConfig?.skillIds ?? [])],
-      skillsAreMetadataOnly: true,
+      skillsAreMetadataOnly: false,
       expectedOutputFormat: bot.agentConfig?.expectedOutputFormat ?? "",
     };
   });
@@ -166,6 +168,7 @@ function deterministicMockPlan(instruction: string, agents: AgentCapability[]): 
       ? `Analyze and carry out the requested work: ${objective}`
       : `Address this requested objective: ${objective}`;
     const agent = selectAgent(agents, taskText);
+    const skillId = skillForObjective(taskText, agent.skillIds);
     const score = [...words(taskText)].filter((token) => words([agent.name, agent.role, agent.description, agent.instructions].join(" ")).has(token)).length;
     return {
       key: `work-${index + 1}`,
@@ -179,6 +182,7 @@ function deterministicMockPlan(instruction: string, agents: AgentCapability[]): 
         ? `Selected ${agent.name} because its configured role, description, or instructions share relevant terms with this objective.`
         : `Selected ${agent.name}; no configured agent profile had a stronger keyword match for this objective.`,
       isFinalConsolidation: false,
+      skillId,
     };
   });
   const finalAgent = selectAgent(agents, "synthesize findings and produce a polished final business deliverable");
@@ -276,6 +280,7 @@ function executionInputFromPlan(input: CreateChiefOfStaffRunInput, plan: ChiefOf
         planningRationale: task.rationale,
         originalInstruction: input.originalInstruction,
         finalConsolidation: task.isFinalConsolidation,
+        skillId: task.skillId,
       },
       dependsOn: task.dependsOn,
       requiresApproval: false,

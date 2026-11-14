@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mockCollaborationOutput } from "./collaboration-protocol.ts";
 import type { Client, InStatement } from "@libsql/client";
 import type { CreateExecutionRunInput, ExecutionDependencyOutput, ExecutionMode, ExecutionRun, ExecutionTask, ExecutionTaskStatus, ExecutionRunStatus } from "@/lib/shared/types";
+import { EXECUTABLE_SKILL_IDS } from "../shared/agent-skills.ts";
+import { validateSkillInput } from "./skills.ts";
 
 export type { CreateExecutionRunInput, ExecutionMode, ExecutionRun, ExecutionTask, ExecutionTaskInput } from "@/lib/shared/types";
 export type RunStatus = ExecutionRunStatus;
@@ -49,6 +51,10 @@ export function validateExecutionRunInput(input: CreateExecutionRunInput): void 
     keys.add(task.key);
     if (typeof task.title !== "string" || !task.title.trim() || task.title.length > MAX_TITLE_LENGTH) throw new Error(`Task ${task.key} needs a title of 1–${MAX_TITLE_LENGTH} characters.`);
     if (typeof task.agentId !== "string" || !task.agentId.trim() || task.agentId.length > 200) throw new Error(`Task ${task.key} needs an assigned agentId.`);
+    if (task.skillId !== undefined) {
+      if (!EXECUTABLE_SKILL_IDS.includes(task.skillId as never)) throw new Error(`Task ${task.key} refers to an unknown executable skill.`);
+      try { validateSkillInput(task.skillId as never, task.skillInput); } catch (error) { throw new Error(`Task ${task.key} has invalid skill input: ${error instanceof Error ? error.message : "validation failed"}`); }
+    }
     if (task.maxAttempts !== undefined && (!Number.isInteger(task.maxAttempts) || task.maxAttempts < 1 || task.maxAttempts > 10)) throw new Error("maxAttempts must be between 1 and 10.");
     if (task.timeoutMs !== undefined && (!Number.isInteger(task.timeoutMs) || task.timeoutMs < 10 || task.timeoutMs > 300_000)) throw new Error("timeoutMs must be between 10 and 300000.");
     if (task.dependsOn && (!Array.isArray(task.dependsOn) || new Set(task.dependsOn).size !== task.dependsOn.length)) throw new Error(`Task ${task.key} has invalid or duplicate dependencies.`);

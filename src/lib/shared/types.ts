@@ -166,6 +166,8 @@ export interface ExecutionTaskInput {
   requiresApproval?: boolean;
   maxAttempts?: number;
   timeoutMs?: number;
+  skillId?: string;
+  skillInput?: unknown;
 }
 
 export interface CreateExecutionRunInput {
@@ -237,6 +239,7 @@ export interface ChiefOfStaffTask {
   dependsOn: string[];
   rationale: string;
   isFinalConsolidation: boolean;
+  skillId?: string;
 }
 
 export interface ChiefOfStaffPlan {
