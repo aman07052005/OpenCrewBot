@@ -8,6 +8,7 @@ import { MastraProvider } from "@composio/mastra";
 import type { ToolsInput } from "@mastra/core/agent";
 import type { ComposioApp } from "@/lib/shared/types";
 import { getSetting, setSetting } from "./db";
+import { GMAIL_ACCOUNT_ID } from "./gmail-integration";
 
 /** Shown first in the Connections panel; search finds the rest. */
 export const FEATURED_APPS = ["slack", "github", "gmail", "googlecalendar", "notion", "linear", "googledrive", "jira"];
@@ -88,4 +89,21 @@ export async function composioTools(slugs: string[]): Promise<ToolsInput> {
   if (!c || slugs.length === 0) return {};
   const session = await c.create(await userId(), { toolkits: slugs, manageConnections: false });
   return (await session.tools()) as unknown as ToolsInput;
+}
+
+/** Never select an arbitrary account when multiple mailboxes are connected. */
+export async function activeGmailAccount(): Promise<{ id: string; userId: string } | null> {
+  const c = requireClient(); const uid = await userId();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const accounts = await Promise.race([
+      c.connectedAccounts.list({ userIds: [uid], toolkitSlugs: ["gmail"], statuses: ["ACTIVE"] }),
+      new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Gmail account lookup timed out.")), 12_000); }),
+    ]);
+    const matches = accounts.items.filter((a) => a.toolkit.slug === "gmail");
+    if (matches.length === 0) return null;
+    if (matches.length !== 1 || !GMAIL_ACCOUNT_ID.test(matches[0].id)) throw new Error("Use exactly one authorized Gmail test mailbox.");
+    return { id: matches[0].id, userId: uid };
+  } catch { throw new Error("Gmail account lookup failed or multiple accounts are connected. Use one authorized test mailbox."); }
+  finally { if (timeout) clearTimeout(timeout); }
 }

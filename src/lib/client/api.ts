@@ -110,4 +110,11 @@ export const api = {
   decideAction: (id: string, decision: "approve" | "reject" | "cancel") => call<{ action: ActionRequest }>(`/api/actions/${encodeURIComponent(id)}`, { method: "POST", json: { decision } }),
   executeAction: (id: string) => call<{ action: ActionRequest }>(`/api/actions/${encodeURIComponent(id)}`, { method: "POST", json: { execute: true } }),
   proposeAction: (input: { agentId: string; operation: string; arguments: unknown }) => call<{ action: ActionRequest }>("/api/actions", { method: "POST", json: input }),
+  gmailVerify: () => call<{ result: { verified: boolean } }>("/api/integrations/gmail", { method: "POST", json: { operation: "verify", testMailbox: true } }),
+  gmailPropose: (agentId: string, subject: string) => call<{ action: ActionRequest }>("/api/integrations/gmail", { method: "POST", json: { operation: "propose", agentId, subject, testMailbox: true } }),
+  integrations: () => call<{ integrations: Array<{ id: string; name: string; status: string; operations: string[]; authentication: string; requiredPermissions: string; executionModes: string[]; resourceScope: string; lastError?: string; verifiedAt?: string }> }>("/api/integrations"),
+  inspectGitHub: (input: { agentId: string; operation: "metadata" | "directory" | "file" | "issue" | "pull-request"; repository: string; path?: string; ref?: string; number?: number }) => call<{ result: unknown }>("/api/integrations/github", { method: "POST", json: input }),
+  inspectMcpTools: (id: string) => call<{ tools: Array<{ name: string; description: string; inputSchema: unknown; annotations: unknown; enabled: boolean }> }>(`/api/integrations/mcp/${encodeURIComponent(id)}`),
+  configureMcpReadTools: (id: string, tools: string[]) => call<{ enabled: string[] }>(`/api/integrations/mcp/${encodeURIComponent(id)}`, { method: "PATCH", json: { tools } }),
+  invokeMcpReadTool: (id: string, input: { agentId: string; tool: string; input: unknown }) => call<{ integration: string; serverId: string; tool: string; result: unknown }>(`/api/integrations/mcp/${encodeURIComponent(id)}`, { method: "POST", json: input }),
 };

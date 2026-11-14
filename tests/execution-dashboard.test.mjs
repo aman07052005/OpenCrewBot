@@ -35,6 +35,7 @@ test("dashboard progress counts successful, failed and skipped tasks as finished
 
 test("dashboard never presents mock output as live output", () => {
   assert.equal(executionOutputKind("mock", { text: "simulated" }), "simulated");
+  assert.equal(executionOutputKind("mock", { deterministic: true, simulated: false }), "deterministic");
   assert.equal(executionOutputKind("live", { mode: "mock", simulated: true }), "simulated");
   assert.equal(executionOutputKind("live", { mode: "live", simulated: false }), "live");
   assert.equal(executionOutputKind("live", { text: "missing markers" }), "unlabelled");

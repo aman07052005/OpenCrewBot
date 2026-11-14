@@ -76,6 +76,7 @@ function AppRow({ app, onChanged }: { app: ComposioApp; onChanged: () => void })
 }
 
 const GITHUB_PRESET = { name: "GitHub", url: "https://api.githubcopilot.com/mcp/" };
+type DiscoveredMcpTool = { name: string; description: string; inputSchema: unknown; annotations: { readOnlyHint?: boolean } | null; enabled: boolean };
 
 function AddServerForm({ onAdded }: { onAdded: () => void }) {
   const { toast } = useApp();
@@ -144,11 +145,38 @@ function AddServerForm({ onAdded }: { onAdded: () => void }) {
 }
 
 export function ConnectionsPanel({ onClose }: { onClose: () => void }) {
-  const { state, toast } = useApp();
+  const { state, toast, openExecutions, openApprovals } = useApp();
   const { data, error, reload, loading } = useConnections(state.connectionsVersion);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ComposioApp[] | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState<string | null>(null);
+  const [integrations, setIntegrations] = useState<Array<{ id: string; name: string; status: string; operations: string[]; authentication?: string; requiredPermissions?: string; resourceScope?: string; verifiedAt?: string; lastError?: string }> | null>(null);
+  const [gmailConfirmed, setGmailConfirmed] = useState(false);
+  const [gmailAgent, setGmailAgent] = useState("");
+  const [gmailSubject, setGmailSubject] = useState("OpenCrewBot Demo TEST2026");
+  const [gmailBusy, setGmailBusy] = useState(false);
+  const [gmailNotice, setGmailNotice] = useState("");
+  const gmailVerified = integrations?.find((item) => item.id === "gmail")?.status === "connected-verified";
+  const gmailOperation = async (operation: "verify" | "propose") => {
+    setGmailBusy(true); setGmailNotice("");
+    try {
+      if (operation === "verify") { await api.gmailVerify(); setGmailNotice("Gmail profile verified by the live provider. No mailbox content was retrieved."); }
+      else { const { action } = await api.gmailPropose(gmailAgent, gmailSubject); setGmailNotice(`Action ${action.status}. Open Approvals to approve and execute the exact test-message read.`); }
+    } catch (e) { setGmailNotice(e instanceof Error ? e.message : "Gmail request failed."); }
+    finally {
+      try { const value = await api.integrations(); setIntegrations(value.integrations); } catch { /* Keep operation notice. */ }
+      setGmailBusy(false);
+    }
+  };
+  const [github, setGithub] = useState({ agentId: "", repository: "", operation: "metadata" as "metadata" | "directory" | "file" | "issue" | "pull-request", path: "", ref: "", number: "" });
+  const [githubBusy, setGithubBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [githubResult, setGithubResult] = useState<unknown>(null);
+  const [mcpTools, setMcpTools] = useState<Record<string, DiscoveredMcpTool[]>>({});
+  const [mcpInputs, setMcpInputs] = useState<Record<string, string>>({});
+  const [mcpBusy, setMcpBusy] = useState<string | null>(null);
+  const [mcpResult, setMcpResult] = useState<unknown>(null);
 
   // Search Composio's whole catalog, debounced.
   useEffect(() => {
@@ -162,6 +190,12 @@ export function ConnectionsPanel({ onClose }: { onClose: () => void }) {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    let active = true;
+    void api.integrations().then((data) => { if (active) setIntegrations(data.integrations); }).catch(() => { if (active) setIntegrations([]); });
+    return () => { active = false; };
+  }, [state.connectionsVersion]);
 
   const test = async (id: string, name: string) => {
     setTesting(id);
@@ -184,17 +218,117 @@ export function ConnectionsPanel({ onClose }: { onClose: () => void }) {
       toast(e instanceof Error ? e.message : "Couldn't remove it.");
     }
   };
+  const discover = async (id: string, name: string) => {
+    setDiscovering(id);
+    try {
+      const data = await api.inspectMcpTools(id);
+      setMcpTools((current) => ({ ...current, [id]: data.tools as DiscoveredMcpTool[] }));
+      const readOnly = data.tools.filter((tool) => (tool.annotations as { readOnlyHint?: boolean } | null)?.readOnlyHint).length;
+      toast(`${name}: ${data.tools.length} discovered tools (${readOnly} advertise read-only access).`);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Could not discover MCP tools.");
+    } finally { setDiscovering(null); }
+  };
+
+  const inspectGithub = async () => {
+    setGithubBusy(true);
+    setGithubResult(null);
+    try {
+      const number = github.number.trim() ? Number(github.number) : undefined;
+      const { result } = await api.inspectGitHub({
+        agentId: github.agentId,
+        operation: github.operation,
+        repository: github.repository.trim(),
+        ...(github.path.trim() ? { path: github.path.trim() } : {}),
+        ...(github.ref.trim() ? { ref: github.ref.trim() } : {}),
+        ...(number ? { number } : {}),
+      });
+      setGithubResult(result);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "GitHub inspection failed.");
+    } finally { setGithubBusy(false); }
+  };
+
+  const reviewGithubFile = async () => {
+    const value = githubResult as { operation?: unknown; file?: { path?: unknown; text?: unknown } } | null;
+    if (value?.operation !== "file" || typeof value.file?.path !== "string" || typeof value.file.text !== "string") return;
+    if (value.file.text.length > 100_000) { toast("Selected file is too large for the bounded Code Review skill."); return; }
+    setReviewBusy(true);
+    try {
+      const created = await api.createExecutionRun({ name: `GitHub Code Review: ${value.file.path}`, executionMode: "mock", concurrencyLimit: 1, tasks: [{ key: "github-code-review", title: "Review selected GitHub source", agentId: github.agentId, skillId: "skill.code-review", skillInput: { files: [{ path: value.file.path, content: value.file.text }] } }] });
+      await api.startExecutionRun(created.run.id);
+      toast("Read-only code review saved to execution history.");
+      openExecutions(created.run.id);
+    } catch (error) { toast(error instanceof Error ? error.message : "Could not start code review."); }
+    finally { setReviewBusy(false); }
+  };
+
+  const toggleMcpTool = async (serverId: string, tool: DiscoveredMcpTool) => {
+    const current = mcpTools[serverId] ?? [];
+    const enabled = current.filter((item) => item.enabled).map((item) => item.name);
+    const next = tool.enabled ? enabled.filter((name) => name !== tool.name) : [...enabled, tool.name];
+    try {
+      const saved = await api.configureMcpReadTools(serverId, next);
+      setMcpTools((all) => ({ ...all, [serverId]: current.map((item) => ({ ...item, enabled: saved.enabled.includes(item.name) })) }));
+    } catch (error) { toast(error instanceof Error ? error.message : "Could not update MCP tool access."); }
+  };
+
+  const invokeMcpTool = async (serverId: string, tool: DiscoveredMcpTool) => {
+    const agent = state.bots.find((bot) => bot.connections.includes(`mcp:${serverId}`));
+    if (!agent) { toast("Connect this MCP server to a bot before invoking a tool."); return; }
+    const key = `${serverId}:${tool.name}`;
+    let input: unknown;
+    try { input = JSON.parse(mcpInputs[key] || "{}"); } catch { toast("MCP input must be valid JSON."); return; }
+    setMcpBusy(key);
+    setMcpResult(null);
+    try {
+      const result = await api.invokeMcpReadTool(serverId, { agentId: agent.id, tool: tool.name, input });
+      setMcpResult(result.result);
+    } catch (error) { toast(error instanceof Error ? error.message : "MCP invocation failed."); }
+    finally { setMcpBusy(null); }
+  };
 
   const apps = query.trim() ? (results ?? []) : (data?.composio.apps ?? []);
 
   return (
     <Drawer title="Connections" onClose={onClose}>
       <p className="text-[13px] leading-relaxed text-mute">
-        Connect apps once, then choose which bots can use each one in the bot&apos;s Details. Actions that change something ask you first, unless the bot has full
-        access.
+        Connect apps once, then choose which bots can use each one in the bot&apos;s Details. Connected-app and MCP writes continue to ask first until they have a
+        registered persistent authorization adapter.
       </p>
 
       <section className="mt-6">
+        <div className="mb-5 rounded-2xl bg-raised p-4">
+          <h3 className="text-[14px] font-medium">Integration status</h3>
+          <p className="mt-1 text-[12px] leading-relaxed text-mute">A connected app is not treated as verified until its provider check succeeds. GitHub reads, approved Gmail test-message reads and owner-enabled MCP tools are the bounded live operations.</p>
+          <div className="mt-3 space-y-2">{integrations?.map((integration) => <div key={integration.id} className="rounded-xl bg-side p-3 text-[12px]"><span className="font-medium">{integration.name}</span><span className="ml-2 rounded-full bg-raised-2 px-2 py-0.5 text-faint">{integration.status}</span><p className="mt-1 text-mute">{integration.operations.join(" · ")}</p>{integration.lastError && <p className="mt-1 text-danger">{integration.lastError}</p>}</div>)}</div>
+        </div>
+        <div className="mb-5 rounded-2xl bg-raised p-4">
+          <h3 className="text-[14px] font-medium">GitHub read-only inspection</h3>
+          <p className="mt-1 text-[12px] text-mute">This sends one bounded request to GitHub&apos;s public API. Private repositories and all repository writes are unavailable.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <select className={inputClass} value={github.agentId} onChange={(event) => setGithub((value) => ({ ...value, agentId: event.target.value }))} aria-label="Agent authorized for GitHub"><option value="">Choose an agent</option>{state.bots.filter((bot) => bot.tools.webSearch || bot.connections.includes("composio:github")).map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select>
+            <input className={inputClass} value={github.repository} onChange={(event) => setGithub((value) => ({ ...value, repository: event.target.value }))} placeholder="owner/repository" aria-label="GitHub repository" />
+            <select className={inputClass} value={github.operation} onChange={(event) => setGithub((value) => ({ ...value, operation: event.target.value as typeof value.operation }))} aria-label="GitHub operation"><option value="metadata">Repository metadata</option><option value="directory">Directory listing</option><option value="file">Selected file</option><option value="issue">Issue</option><option value="pull-request">Pull request</option></select>
+            {github.operation === "file" || github.operation === "directory" ? <input className={inputClass} value={github.path} onChange={(event) => setGithub((value) => ({ ...value, path: event.target.value }))} placeholder={github.operation === "file" ? "Path, e.g. src/index.ts" : "Directory path (optional)"} aria-label="Repository path" /> : <input className={inputClass} value={github.number} onChange={(event) => setGithub((value) => ({ ...value, number: event.target.value }))} placeholder="Issue or pull request number" disabled={github.operation === "metadata"} aria-label="Issue or pull request number" />}
+            <input className={inputClass} value={github.ref} onChange={(event) => setGithub((value) => ({ ...value, ref: event.target.value }))} placeholder="Branch or tag (for files)" aria-label="GitHub ref" />
+          </div>
+          <div className="mt-3 flex justify-end"><Button size="sm" variant="secondary" disabled={githubBusy || !github.agentId || !github.repository.trim() || (github.operation === "file" && !github.path.trim()) || ((github.operation === "issue" || github.operation === "pull-request") && !github.number.trim())} onClick={() => void inspectGithub()}>{githubBusy ? "Inspectingâ€¦" : "Inspect"}</Button></div>
+          {githubResult !== null && <><pre className="mt-3 max-h-56 overflow-auto rounded-xl bg-side p-3 text-[11px] text-mute">{JSON.stringify(githubResult, null, 2)}</pre>{(githubResult as { operation?: unknown }).operation === "file" && <div className="mt-2 flex justify-end"><Button size="sm" variant="ghost" disabled={reviewBusy} onClick={() => void reviewGithubFile()}>{reviewBusy ? "Starting reviewâ€¦" : "Run Code Review"}</Button></div>}</>}
+        </div>
+        <div className="mb-5 rounded-2xl bg-raised p-4">
+          <h3 className="text-[14px] font-medium">Gmail — authorized synthetic test read</h3>
+          <p className="mt-1 text-[12px] text-mute">Connect one dedicated test mailbox via Composio below. Use only synthetic data. Profile verification is live; reading one designated email requires separate approval. No email is sent or modified.</p>
+          <label className="mt-3 flex items-start gap-2 text-[12px]"><input type="checkbox" checked={gmailConfirmed} onChange={(e) => setGmailConfirmed(e.target.checked)} /> I confirm this is an authorized synthetic-only test mailbox.</label>
+          <div className="mt-3"><Button size="sm" variant="secondary" disabled={!gmailConfirmed || gmailBusy} onClick={() => void gmailOperation("verify")}>Verify Gmail profile</Button></div>
+          <div className="mt-3 space-y-2">
+            <select className={inputClass} value={gmailAgent} onChange={(e) => setGmailAgent(e.target.value)} aria-label="Gmail authorized agent"><option value="">Choose Gmail-enabled agent</option>{state.bots.filter((bot) => bot.tools.askUser && bot.connections.includes("composio:gmail")).map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select>
+            <input className={inputClass} value={gmailSubject} onChange={(e) => setGmailSubject(e.target.value)} aria-label="Synthetic email subject" />
+            <p className="text-[12px] text-mute">Exact test subject: OpenCrewBot Demo plus a unique 4–32 character alphanumeric suffix (hyphens allowed). Exact body: OpenCrewBot synthetic test: revenue 120 units 12.</p>
+            <div className="flex flex-wrap gap-2"><Button size="sm" variant="primary" disabled={!gmailConfirmed || !gmailVerified || !gmailAgent || gmailBusy} onClick={() => void gmailOperation("propose")}>Propose test-message read</Button><Button size="sm" variant="ghost" onClick={() => { onClose(); openApprovals(); }}>Open Approvals</Button></div>
+          </div>
+          {gmailNotice && <p role="status" className="mt-3 text-[12px] text-mute">{gmailNotice}</p>}
+        </div>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="flex items-center gap-1.5 text-[12.5px] font-medium text-mute">
             <Plug size={13} /> Apps via Composio
@@ -261,6 +395,9 @@ export function ConnectionsPanel({ onClose }: { onClose: () => void }) {
                 <Button size="sm" variant="ghost" disabled={testing === s.id} onClick={() => test(s.id, s.name)}>
                   {testing === s.id ? "Testing…" : "Test"}
                 </Button>
+                <Button size="sm" variant="ghost" disabled={discovering === s.id} onClick={() => void discover(s.id, s.name)}>
+                  {discovering === s.id ? "Discovering…" : "Discover"}
+                </Button>
                 <button aria-label={`Remove ${s.name}`} onClick={() => remove(s.id, s.name)} className="rounded-full p-2 text-faint hover:bg-raised-2 hover:text-danger">
                   <Trash2 size={15} />
                 </button>
@@ -268,6 +405,19 @@ export function ConnectionsPanel({ onClose }: { onClose: () => void }) {
             ))}
           </ul>
         )}
+        {Object.entries(mcpTools).map(([serverId, tools]) => {
+          const server = data?.mcpServers.find((item) => item.id === serverId);
+          return <div key={serverId} className="mb-3 rounded-2xl bg-raised p-4">
+            <p className="text-[13px] font-medium">Discovered tools{server ? ` · ${server.name}` : ""}</p>
+            <p className="mt-1 text-[12px] text-mute">Only tools that currently advertise read-only access can be enabled. Results are protocol-backed and redacted before display.</p>
+            <div className="mt-3 space-y-2">{tools.map((tool) => {
+              const key = `${serverId}:${tool.name}`;
+              const readOnly = tool.annotations?.readOnlyHint === true;
+              return <div key={tool.name} className="rounded-xl bg-side p-3 text-[12px]"><div className="flex items-start gap-2"><span className="min-w-0 flex-1"><span className="font-medium">{tool.name}</span><span className="ml-2 text-faint">{readOnly ? "read-only" : "not eligible"}</span><span className="mt-1 block text-mute">{tool.description || "No description provided."}</span></span><Button size="sm" variant="ghost" disabled={!readOnly} onClick={() => void toggleMcpTool(serverId, tool)}>{tool.enabled ? "Disable" : "Enable"}</Button></div>{tool.enabled && <><input className={`${inputClass} mt-2`} value={mcpInputs[key] ?? "{}"} onChange={(event) => setMcpInputs((all) => ({ ...all, [key]: event.target.value }))} aria-label={`JSON input for ${tool.name}`} /><div className="mt-2 flex justify-end"><Button size="sm" variant="secondary" disabled={mcpBusy === key} onClick={() => void invokeMcpTool(serverId, tool)}>{mcpBusy === key ? "Runningâ€¦" : "Run"}</Button></div></>}</div>;
+            })}</div>
+          </div>;
+        })}
+        {mcpResult !== null && <pre className="mb-3 max-h-56 overflow-auto rounded-2xl bg-raised p-3 text-[11px] text-mute">{JSON.stringify(mcpResult, null, 2)}</pre>}
         <AddServerForm onAdded={reload} />
       </section>
     </Drawer>

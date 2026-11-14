@@ -52,3 +52,24 @@ test("approval state is persistent, auditable, and permission revocation blocks 
   const blocked = await executeApprovedAction(client, action.id, bot("controlled", { preapprovedOperations: [], allowedDestinations: [], maxActionsPerDay: 20 })); assert.equal(blocked.status, "failed");
   const stored = await getAction(client, action.id); assert.equal(stored.status, "failed"); assert.ok((await actionAudit(client, action.id)).some((entry) => entry.event === "failed"));
 });
+
+test("Gmail read requires explicit approval at all permission levels, and rejection never invokes provider", async (t) => {
+  const client = await fixture(t); const args = { accountId: "ca_test", subject: "OpenCrewBot Demo TEST2026" };
+  const gmailBot = (mode = "ask") => ({ ...bot(mode), connections: ["composio:gmail"] });
+  for (const mode of ["ask", "controlled", "full"]) assert.equal(authorizeAction(gmailBot(mode), "gmail.demo.read", args).decision, "approval-required");
+  assert.equal(authorizeAction(bot("full"), "gmail.demo.read", args).decision, "denied");
+  let calls = 0; const handlers = { gmailRead: async () => { calls++; return { simulated: false, synthetic: true }; } };
+  const rejected = await proposeAction(client, gmailBot(), { operation: "gmail.demo.read", arguments: args });
+  await decideAction(client, rejected.id, "reject"); await executeApprovedAction(client, rejected.id, gmailBot(), handlers); assert.equal(calls, 0);
+  const approved = await proposeAction(client, gmailBot(), { operation: "gmail.demo.read", arguments: args });
+  await decideAction(client, approved.id, "approve"); await Promise.all([executeApprovedAction(client, approved.id, gmailBot(), handlers), executeApprovedAction(client, approved.id, gmailBot(), handlers)]); assert.equal(calls, 1); assert.equal((await getAction(client, approved.id)).invocationCount, 1);
+});
+
+test("Gmail approval is tied to exact subject and account; revoked connections block execution", async (t) => {
+  const client = await fixture(t); const args = { accountId: "ca_test", subject: "OpenCrewBot Demo TEST2026" }; const connected = { ...bot(), connections: ["composio:gmail"] };
+  const action = await proposeAction(client, connected, { operation: "gmail.demo.read", arguments: args }); await decideAction(client, action.id, "approve");
+  await client.execute({ sql: "UPDATE action_requests SET arguments_json=? WHERE id=?", args: [JSON.stringify({ ...args, subject: "OpenCrewBot Demo CHANGED" }), action.id] });
+  const handlers = { gmailRead: async () => { throw new Error("must not invoke"); } };
+  assert.equal((await executeApprovedAction(client, action.id, connected, handlers)).invocationCount, 0);
+  const revoked = await proposeAction(client, connected, { operation: "gmail.demo.read", arguments: args }); await decideAction(client, revoked.id, "approve"); assert.equal((await executeApprovedAction(client, revoked.id, bot(), handlers)).invocationCount, 0);
+});

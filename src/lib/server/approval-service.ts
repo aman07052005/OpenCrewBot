@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Client } from "@libsql/client";
+import { GMAIL_ACCOUNT_ID, GMAIL_SUBJECT } from "./gmail-integration.ts";
+import type { GmailReadArgs } from "./gmail-integration.ts";
 import type { ActionRequest, ApprovalMode, Bot, PermissionPolicy } from "@/lib/shared/types";
 
 const SimulatedEmailSchema = z.object({ destination: z.string().email().max(320), subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(20_000) }).strict();
-export const ACTION_OPERATIONS = { "simulated.email.send": { tool: "simulated-email", classification: "external-write", schema: SimulatedEmailSchema, simulated: true } } as const;
+const GmailReadSchema = z.object({ accountId: z.string().regex(GMAIL_ACCOUNT_ID), subject: z.string().regex(GMAIL_SUBJECT) }).strict();
+export const ACTION_OPERATIONS = {
+  "simulated.email.send": { tool: "simulated-email", classification: "external-write", schema: SimulatedEmailSchema, simulated: true },
+  "gmail.demo.read": { tool: "gmail", classification: "external-read", schema: GmailReadSchema, simulated: false },
+} as const;
 export type ActionOperation = keyof typeof ACTION_OPERATIONS;
 export const defaultPermissionPolicy = (): PermissionPolicy => ({ preapprovedOperations: [], allowedDestinations: [], maxActionsPerDay: 20 });
 type Decision = { decision: "allowed" | "approval-required" | "denied"; reason: string };
@@ -17,16 +23,20 @@ function scrub(value: unknown): unknown {
 }
 function destination(args: Record<string, unknown>): string | undefined { return typeof args.destination === "string" ? args.destination.toLowerCase().split("@").at(-1) : undefined; }
 export function authorizeAction(bot: Bot, operation: string, args: unknown): Decision {
-  const known = ACTION_OPERATIONS[operation as ActionOperation];
+  const known = Object.hasOwn(ACTION_OPERATIONS, operation) ? ACTION_OPERATIONS[operation as ActionOperation] : undefined;
   if (!known) return { decision: "denied", reason: "Unknown or unsupported action operation." };
   if (!bot.tools.askUser) return { decision: "denied", reason: "The agent's approval interaction tool is disabled." };
   const parsed = known.schema.safeParse(args);
   if (!parsed.success) return { decision: "denied", reason: "Action arguments failed server-side validation." };
+  if (operation === "gmail.demo.read") {
+    if (!bot.connections.includes("composio:gmail")) return { decision: "denied", reason: "Gmail is not assigned to this agent." };
+    return { decision: "approval-required", reason: "Reading the designated test message always requires explicit owner approval." };
+  }
   const policy = bot.permissionPolicy ?? defaultPermissionPolicy();
   if (bot.approval === "ask") return { decision: "approval-required", reason: "Ask First requires approval for external writes." };
   if (bot.approval === "full") return { decision: "allowed", reason: "Full Access allows this supported, scoped simulated operation." };
   const allowedOperation = policy.preapprovedOperations.includes(operation);
-  const host = destination(parsed.data);
+  const host = destination(parsed.data as Record<string, unknown>);
   const allowedDestination = !policy.allowedDestinations.length || (host !== undefined && policy.allowedDestinations.includes(host));
   return allowedOperation && allowedDestination ? { decision: "allowed", reason: "Controlled Access preapproval matches this operation and destination." } : { decision: "approval-required", reason: "Controlled Access requires approval outside its configured scope." };
 }
@@ -34,9 +44,13 @@ function row(value: Record<string, unknown>): ActionRequest {
   return { id: String(value.id), agentId: String(value.agent_id), conversationId: value.conversation_id == null ? null : String(value.conversation_id), executionRunId: value.execution_run_id == null ? null : String(value.execution_run_id), executionTaskId: value.execution_task_id == null ? null : String(value.execution_task_id), tool: String(value.tool), operation: String(value.operation), arguments: JSON.parse(String(value.arguments_json)), preview: String(value.preview), permissionLevel: String(value.permission_level) as ApprovalMode, decision: String(value.decision) as ActionRequest["decision"], reason: String(value.reason), status: String(value.status) as ActionRequest["status"], createdAt: String(value.created_at), expiresAt: value.expires_at == null ? null : String(value.expires_at), decidedAt: value.decided_at == null ? null : String(value.decided_at), result: value.result_json == null ? null : JSON.parse(String(value.result_json)), error: value.error == null ? null : String(value.error), simulated: Number(value.simulated) === 1, invocationCount: Number(value.invocation_count ?? 0) };
 }
 async function audit(client: Client, actionId: string, event: string, reason: string) { await client.execute({ sql: "INSERT INTO action_audit_log (id,action_id,event,reason,created_at) VALUES (?,?,?,?,?)", args: [randomUUID(), actionId, event, reason, new Date().toISOString()] }); }
-function preview(operation: ActionOperation, args: z.infer<typeof SimulatedEmailSchema>) { return `SIMULATED EMAIL — destination: ${args.destination}; subject: ${args.subject}; body: ${args.body.slice(0, 500)}. No email has been sent.`; }
+function preview(operation: ActionOperation, args: z.infer<typeof SimulatedEmailSchema> | GmailReadArgs) {
+  if (operation === "gmail.demo.read" && "accountId" in args) return `LIVE GMAIL READ — connection: ${args.accountId}; exact subject: ${args.subject}. Retrieve one synthetic inbox message only. No email is sent or modified.`;
+  if ("destination" in args) return `SIMULATED EMAIL — destination: ${args.destination}; subject: ${args.subject}; body: ${args.body.slice(0, 500)}. No email has been sent.`;
+  throw new Error("Invalid action preview.");
+}
 export async function proposeAction(client: Client, bot: Bot, input: { operation: string; arguments: unknown; conversationId?: string; executionRunId?: string; executionTaskId?: string }): Promise<ActionRequest> {
-  const known = ACTION_OPERATIONS[input.operation as ActionOperation];
+  const known = Object.hasOwn(ACTION_OPERATIONS, input.operation) ? ACTION_OPERATIONS[input.operation as ActionOperation] : undefined;
   let decision = authorizeAction(bot, input.operation, input.arguments);
   if (bot.approval === "controlled" && decision.decision === "allowed") {
     const policy = bot.permissionPolicy ?? defaultPermissionPolicy();
@@ -59,16 +73,33 @@ async function expireActions(client: Client) { const now = new Date().toISOStrin
 export async function decideAction(client: Client, id: string, decision: "approve" | "reject" | "cancel"): Promise<ActionRequest | null> { await expireActions(client); const next = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "cancelled"; const reason = decision === "approve" ? "Approved by owner." : decision === "reject" ? "Rejected by owner." : "Cancelled by owner."; const updated = await client.execute({ sql: "UPDATE action_requests SET status=?,decided_at=? WHERE id=? AND status='pending'", args: [next, new Date().toISOString(), id] }); if (!updated.rowsAffected) return null; await audit(client, id, next, reason); return getAction(client, id); }
 const g = globalThis as unknown as { __simulatedActionInvocations?: number };
 export function simulatedInvocationCount() { return g.__simulatedActionInvocations ?? 0; }
-export async function executeApprovedAction(client: Client, id: string, bot: Bot): Promise<ActionRequest | null> {
+export async function executeApprovedAction(client: Client, id: string, bot: Bot, handlers?: { gmailRead: (args: GmailReadArgs) => Promise<unknown> }): Promise<ActionRequest | null> {
   await expireActions(client); const action = await getAction(client, id); if (!action) return null;
   if (action.status !== "approved") return action;
   const current = authorizeAction(bot, action.operation, action.arguments);
-  const revoked = current.decision === "denied" || (action.decision === "allowed" && current.decision !== "allowed");
+  const gmail = action.operation === "gmail.demo.read";
+  const parsedGmail = gmail ? GmailReadSchema.safeParse(action.arguments) : null;
+  const invalidGmail = gmail && (!parsedGmail?.success || action.decision !== "approval-required" || !action.decidedAt || !action.expiresAt || action.expiresAt <= new Date().toISOString() || action.preview !== preview("gmail.demo.read", parsedGmail.data));
+  const revoked = bot.id !== action.agentId || invalidGmail || current.decision === "denied" || (action.decision === "allowed" && current.decision !== "allowed");
   if (revoked) { await client.execute({ sql: "UPDATE action_requests SET status='failed',error=?,decided_at=? WHERE id=? AND status='approved'", args: ["Permission was revoked or scope no longer matches before execution.", new Date().toISOString(), id] }); await audit(client, id, "failed", "Permission was revoked or scope no longer matches before execution."); return getAction(client, id); }
   const claimed = await client.execute({ sql: "UPDATE action_requests SET status='executing' WHERE id=? AND status='approved'", args: [id] }); if (!claimed.rowsAffected) return getAction(client, id);
-  await audit(client, id, "executing", "Claimed exactly once for simulated execution.");
+  await audit(client, id, "executing", gmail ? "Claimed once for approved Gmail read." : "Claimed exactly once for simulated execution.");
+  if (gmail) {
+    try {
+      if (!handlers || !parsedGmail?.success) throw new Error("Gmail adapter is not configured.");
+      await client.execute({ sql: "UPDATE action_requests SET invocation_count=invocation_count+1 WHERE id=? AND status='executing'", args: [id] });
+      const result = await handlers.gmailRead(parsedGmail.data);
+      await client.execute({ sql: "UPDATE action_requests SET status='succeeded',result_json=? WHERE id=? AND status='executing'", args: [JSON.stringify(result), id] });
+      await audit(client, id, "succeeded", "Approved synthetic Gmail message retrieved; no mail sent or modified.");
+    } catch {
+      const message = "Gmail read failed or authorization changed. Check the test mailbox, scope and exact synthetic message. No automatic retry.";
+      await client.execute({ sql: "UPDATE action_requests SET status='failed',error=? WHERE id=? AND status='executing'", args: [message, id] });
+      await audit(client, id, "failed", message);
+    }
+    return getAction(client, id);
+  }
   g.__simulatedActionInvocations = (g.__simulatedActionInvocations ?? 0) + 1;
-  const result = { simulated: true, message: "Simulated external action succeeded. No email was sent.", invocation: g.__simulatedActionInvocations };
+  const result = { simulated: true, message: "Simulated external action succeeded. No email was sent.", adapterInvocationSequence: g.__simulatedActionInvocations };
   await client.execute({ sql: "UPDATE action_requests SET status='succeeded',result_json=?,invocation_count=invocation_count+1 WHERE id=? AND status='executing'", args: [JSON.stringify(result), id] }); await audit(client, id, "succeeded", "Simulated adapter completed; no external service was contacted."); return getAction(client, id);
 }
 export async function actionAudit(client: Client, id: string) { const result = await client.execute({ sql: "SELECT event,reason,created_at FROM action_audit_log WHERE action_id=? ORDER BY created_at", args: [id] }); return result.rows.map((item) => ({ event: String(item.event), reason: String(item.reason), createdAt: String(item.created_at) })); }

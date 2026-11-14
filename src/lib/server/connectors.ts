@@ -33,11 +33,12 @@ export interface ConnectorToolset {
 const appName = (slug: string) => slug.charAt(0).toUpperCase() + slug.slice(1);
 
 export async function buildConnectorTools(bot: Bot, clientId: string): Promise<ConnectorToolset> {
-  const composioSlugs = bot.connections.filter((c) => c.startsWith("composio:")).map((c) => c.slice("composio:".length));
+  const composioSlugs = bot.connections.filter((c) => c.startsWith("composio:") && c !== "composio:gmail").map((c) => c.slice("composio:".length));
   const mcpIds = bot.connections.filter((c) => c.startsWith("mcp:")).map((c) => c.slice("mcp:".length));
   const tools: ToolsInput = {};
   const capabilities: string[] = [];
   let close = async () => {};
+  if (bot.connections.includes("composio:gmail")) capabilities.push("Gmail is available only through the owner-controlled synthetic test-message approval in Connections. You cannot access mailbox tools directly.");
 
   if (composioSlugs.length && keys.composio()) {
     try {

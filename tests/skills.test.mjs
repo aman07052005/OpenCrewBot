@@ -16,7 +16,8 @@ test("dynamic selection only chooses an enabled matching skill", () => {
 
 test("financial model computes profit, margins and break-even deterministically", () => {
   const output = executeSkill("skill.financial-modelling", { revenue: 1000, costOfGoodsSold: 400, operatingCosts: 200, taxRate: .25, fixedCosts: 600, pricePerUnit: 20, variableCostPerUnit: 5, projectionPeriods: 1, growthRate: .1 });
-  assert.equal(output.simulated, true);
+  assert.equal(output.simulated, false);
+  assert.equal(output.deterministic, true);
   assert.equal(output.result.current.grossProfit, 600);
   assert.equal(output.result.current.netProfit, 300);
   assert.equal(output.result.current.breakEvenUnits, 40);

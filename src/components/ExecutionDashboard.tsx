@@ -40,10 +40,10 @@ function ModePill({ mode }: { mode: ExecutionMode }) {
 
 function OutputView({ mode, output }: { mode: ExecutionMode; output: unknown }) {
   const kind = executionOutputKind(mode, output);
-  const label = kind === "simulated" ? "SIMULATED OUTPUT" : kind === "live" ? "REAL MODEL OUTPUT" : "OUTPUT TYPE UNKNOWN";
+  const label = kind === "deterministic" ? "DETERMINISTIC LOCAL OUTPUT" : kind === "simulated" ? "SIMULATED OUTPUT" : kind === "live" ? "REAL MODEL OUTPUT" : "OUTPUT TYPE UNKNOWN";
   return (
     <div className="mt-3 overflow-hidden rounded-xl bg-[#151515] ring-1 ring-line">
-      <div className={clsx("px-3 py-2 text-[10px] font-bold tracking-[0.12em]", kind === "simulated" ? "text-warn" : kind === "live" ? "text-[#8db4ff]" : "text-mute")}>{label}</div>
+      <div className={clsx("px-3 py-2 text-[10px] font-bold tracking-[0.12em]", kind === "simulated" ? "text-warn" : kind === "live" ? "text-[#8db4ff]" : kind === "deterministic" ? "text-ok" : "text-mute")}>{label}</div>
       <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-line px-3 py-3 text-[12px] leading-relaxed text-mute">{JSON.stringify(output, null, 2) ?? String(output)}</pre>
     </div>
   );

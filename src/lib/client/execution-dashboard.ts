@@ -17,11 +17,12 @@ export function executionProgress(run: ExecutionRun) {
   return { total, finished, succeeded: counts.succeeded, percent: total ? Math.round((finished / total) * 100) : 0, counts };
 }
 
-/** A simulated marker wins even if a malformed payload is attached to a live run. */
-export function executionOutputKind(runMode: ExecutionMode, output: unknown): "simulated" | "live" | "unlabelled" {
-  if (runMode === "mock") return "simulated";
+/** Deterministic local skills are neither provider output nor fabricated mock text. */
+export function executionOutputKind(runMode: ExecutionMode, output: unknown): "deterministic" | "simulated" | "live" | "unlabelled" {
   if (!output || typeof output !== "object") return "unlabelled";
-  const value = output as { mode?: unknown; simulated?: unknown };
+  const value = output as { mode?: unknown; simulated?: unknown; deterministic?: unknown };
+  if (value.deterministic === true && value.simulated === false) return "deterministic";
+  if (runMode === "mock") return "simulated";
   if (value.mode === "mock" || value.simulated === true) return "simulated";
   if (value.mode === "live" && value.simulated === false) return "live";
   return "unlabelled";
