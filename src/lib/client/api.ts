@@ -24,6 +24,8 @@ import type {
   CreateScheduledWorkflowInput,
   ScheduledWorkflow,
   ScheduledWorkflowOccurrence,
+  ModelProviderStatus,
+  ModelUsageRecord,
 } from "@/lib/shared/types";
 
 async function call<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -56,6 +58,9 @@ export const api = {
   saveScopedMemory: (target: MemoryTarget, content: string, revision: string, reason: string) => call<{ document: MemoryDocument }>("/api/memory", { method: "PUT", json: { ...target, content, revision, reason } }),
   bootstrap: () => call<Bootstrap>("/api/bootstrap"),
   models: (refresh = false) => call<{ models: ModelOption[] }>(`/api/models${refresh ? "?refresh=1" : ""}`),
+  modelProviders: () => call<{ providers: ModelProviderStatus[] }>("/api/models/providers"),
+  verifyModelProvider: (id: "openai-compatible" | "ollama") => call<{ verification: { models: string[] } }>(`/api/models/providers/${id}/verify`, { method: "POST", json: {} }),
+  modelUsage: (limit = 100) => call<{ usage: ModelUsageRecord[] }>(`/api/models/usage?limit=${encodeURIComponent(limit)}`),
   createBot: (input: BotInput) => call<{ bot: Bot }>("/api/bots", { method: "POST", json: input }),
   updateBot: (id: string, patch: Partial<BotInput>) => call<{ bot: Bot }>(`/api/bots/${id}`, { method: "PATCH", json: patch }),
   deleteBot: (id: string) => call(`/api/bots/${id}`, { method: "DELETE" }),

@@ -77,7 +77,7 @@ export function createAgentFactoryService(dependencies: AgentFactoryDependencies
       throw new AgentFactoryError(errorMessage(error));
     }
     if (request.generationMode === "live" && !dependencies.hasLiveKey()) {
-      throw new AgentFactoryError("Live agent generation requires NEBIUS_API_KEY. Select mock mode for a deterministic configuration; no fallback is performed.");
+      throw new AgentFactoryError("Live agent generation requires an owner-configured live provider. Select mock mode for a deterministic configuration; no fallback is performed.");
     }
     const description = redact(request.description);
     const [bots, models] = await Promise.all([dependencies.listBots(), dependencies.listModels()]);

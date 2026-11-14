@@ -1,6 +1,9 @@
+import { z } from "zod";
 import { Agent } from "@mastra/core/agent";
 import { DEFAULT_MODEL } from "./models.ts";
 import { AGENT_SKILLS, AgentFactoryModelOutputSchema, type AgentFactoryLiveGenerator } from "./agent-factory.ts";
+import { estimatedCost, extractProviderUsage, generateLocalStructured, globalProviderRoute, languageModelFor } from "./provider-runtime.ts";
+import { recordModelUsage } from "./model-usage.ts";
 
 function configurationPrompt(description: string, modelIds: string[]): string {
   return [
@@ -24,23 +27,40 @@ function configurationPrompt(description: string, modelIds: string[]): string {
 
 export function createLiveAgentFactoryGenerator(modelId = process.env.OPENCREWBOT_AGENT_FACTORY_MODEL?.trim() || DEFAULT_MODEL): AgentFactoryLiveGenerator {
   return async ({ description, modelIds }) => {
-    if (!process.env.NEBIUS_API_KEY) throw new Error("NEBIUS_API_KEY is not configured.");
-    if (!modelIds.includes(modelId)) throw new Error(`Agent Factory model ${modelId} is not in the current model catalog.`);
-    const generator = new Agent({
-      id: "opencrewbot-agent-factory",
-      name: "OpenCrewBot Agent Factory",
-      instructions: "Generate safe agent configuration data. You do not create agents, assign permissions, or call tools.",
-      model: `nebius/${modelId}`,
+    const route = globalProviderRoute("agent-factory", modelId);
+    const started = Date.now();
+    if (route.providerId === "nebius" && !modelIds.includes(route.model)) throw new Error(`Agent Factory model ${route.model} is not in the current model catalog.`);
+    const result = route.providerId === "ollama"
+      ? await generateLocalStructured(route, 'Generate safe agent configuration data. You do not create agents, assign permissions, or call tools.', configurationPrompt(description, modelIds), z.toJSONSchema(AgentFactoryModelOutputSchema))
+      : await (async () => {
+        const generator = new Agent({
+          id: "opencrewbot-agent-factory",
+          name: "OpenCrewBot Agent Factory",
+          instructions: "Generate safe agent configuration data. You do not create agents, assign permissions, or call tools.",
+          model: languageModelFor(route),
+        });
+        return generator.generate(configurationPrompt(description, modelIds), {
+          abortSignal: AbortSignal.timeout(60_000),
+          structuredOutput: {
+            schema: AgentFactoryModelOutputSchema,
+            instructions: "Return a concise, valid agent configuration using only the supplied models, existing boolean tools, and skill identifiers.",
+            jsonPromptInjection: "auto",
+          },
+        });
+      })();
+    const validated = AgentFactoryModelOutputSchema.safeParse(result.object);
+    const usage = extractProviderUsage((result as unknown as { usage?: unknown }).usage);
+    const pricing = await estimatedCost(route, usage);
+    await recordModelUsage({
+      agentId: "system:agent-factory", conversationId: null, executionRunId: null, taskId: null,
+      providerId: route.providerId, model: route.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens, cachedInputTokens: usage.cachedInputTokens, reasoningTokens: usage.reasoningTokens,
+      usageKind: usage.totalTokens === null ? "unknown" : "reported", durationMs: Date.now() - started,
+      success: validated.success, fallbackAttempt: 0, estimatedCostUsd: pricing.cost, currency: "USD",
+      pricingVersion: pricing.pricingVersion, routingReason: route.reason, error: validated.success ? null : "Structured output failed schema validation.",
     });
-    const result = await generator.generate(configurationPrompt(description, modelIds), {
-      abortSignal: AbortSignal.timeout(60_000),
-      structuredOutput: {
-        schema: AgentFactoryModelOutputSchema,
-        instructions: "Return a concise, valid agent configuration using only the supplied models, existing boolean tools, and skill identifiers.",
-        jsonPromptInjection: "auto",
-      },
-    });
-    return result.object;
+    if (!validated.success) throw new Error("Structured output failed schema validation: " + validated.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`).join("; "));
+    return validated.data;
   };
 }
 

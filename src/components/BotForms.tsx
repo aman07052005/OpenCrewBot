@@ -4,7 +4,7 @@ import clsx from "clsx";
 import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client/api";
-import type { Bot, BotInput } from "@/lib/shared/types";
+import type { AgentModelConfig, Bot, BotInput, ModelProviderId, TaskCategory } from "@/lib/shared/types";
 import { useApp } from "./OpenCrewBotApp";
 import { ModelPicker } from "./ModelPicker";
 import { Button, Drawer, Field, Mascot, Segmented, Toggle, inputClass } from "./ui";
@@ -62,6 +62,12 @@ export function BotForm({ bot, onDone }: { bot?: Bot; onDone?: (bot: Bot) => voi
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   const set = <K extends keyof BotInput>(k: K, v: BotInput[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const modelConfig: AgentModelConfig = form.modelConfig ?? { providerId:"nebius", primaryModel:form.model, routingMode:"fixed" };
+  const setConfig = (patch: Partial<AgentModelConfig>) => setForm((f) => ({ ...f, modelConfig: { ...(f.modelConfig ?? { providerId:"nebius", primaryModel:f.model, routingMode:"fixed" }), ...patch } }));
+  const fallbacks = modelConfig.fallbackModels ?? [];
+  const providers: { id: Exclude<ModelProviderId, "mock">; name:string }[] = [{id:"nebius",name:"Nebius"},{id:"openai-compatible",name:"Hosted compatible"},{id:"ollama",name:"Local Ollama"}];
+  const categories: TaskCategory[] = ["general","planning","research","coding","math","writing","structured","tools"];
+  const changeFallback = (index: number, patch: Partial<NonNullable<AgentModelConfig["fallbackModels"]>[number]>) => setConfig({ fallbackModels:fallbacks.map((f,i) => i === index ? { ...f,...patch } : f) });
   const setTool = (k: keyof BotInput["tools"], v: boolean) => setForm((f) => ({
     ...f,
     tools: { ...f.tools, [k]: v },
@@ -153,13 +159,19 @@ export function BotForm({ bot, onDone }: { bot?: Bot; onDone?: (bot: Bot) => voi
           />
         </Field>
 
-        {/* Not a <label>: the picker holds buttons and its own search field. */}
-        <div>
-          <span className="mb-1.5 block text-[12.5px] font-medium text-mute">Model</span>
-          <ModelPicker value={form.model} onChange={(id) => set("model", id)} />
-          <span className="mt-1.5 block text-[12px] leading-snug text-faint">
-            {state.status?.mock ? "Mock mode: replies come from a scripted model until NEBIUS_API_KEY is set." : "Open-source models on Nebius Token Factory."}
-          </span>
+        <div className="space-y-3 rounded-2xl bg-raised p-3 ring-1 ring-line">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Provider"><select className={inputClass} value={modelConfig.providerId} onChange={(e) => { const providerId = e.target.value as ModelProviderId; setConfig({ providerId, primaryModel:providerId === "nebius" ? form.model : "", localOnly:providerId === "ollama" && modelConfig.localOnly }); }}>{providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+            <Field label="Routing"><select className={inputClass} value={modelConfig.routingMode} onChange={(e) => setConfig({ routingMode:e.target.value as AgentModelConfig["routingMode"] })}><option value="fixed">Fixed</option><option value="automatic">Automatic</option></select></Field>
+          </div>
+          {modelConfig.providerId === "nebius" ? <div><span className="mb-1.5 block text-[12.5px] font-medium text-mute">Primary model</span><ModelPicker value={modelConfig.primaryModel} onChange={(id) => setForm((f) => ({ ...f, model:id, modelConfig:{ ...(f.modelConfig ?? { providerId:"nebius", routingMode:"fixed" }), primaryModel:id } }))} /></div> : <Field label="Primary model" hint="Exact ID in the server environment model allowlist."><input className={inputClass} value={modelConfig.primaryModel} onChange={(e) => setConfig({ primaryModel:e.target.value })} /></Field>}
+          <Field label="Max output tokens"><input className={inputClass} type="number" min="1" max="100000" value={modelConfig.maxOutputTokens ?? ""} onChange={(e) => setConfig({ maxOutputTokens:e.target.value ? Number(e.target.value) : undefined })} /></Field>
+          {modelConfig.providerId === "ollama" && <Toggle label="Local-only inference" hint="Restricts this agent's model calls to Ollama. This is not a guarantee of privacy for shared rooms, external tools or other agents." checked={Boolean(modelConfig.localOnly)} onChange={(v) => setConfig({ localOnly:v, fallbackModels:v ? fallbacks.filter((f) => f.providerId === "ollama") : fallbacks })} />}
+          <div className="space-y-2"><div className="flex items-center justify-between gap-2"><span className="text-sm font-medium">Alternate models (ordered)</span><button type="button" className="text-xs text-mute underline disabled:opacity-40" disabled={fallbacks.length >= 5} onClick={() => setConfig({ fallbackModels:[...fallbacks,{providerId:modelConfig.providerId, model:""}] })}>Add model</button></div>
+            <p className="text-xs text-faint">Automatic routing uses the first alternate designated for the task category. Otherwise it uses the primary. Persistent tasks may try remaining authorized models after a safe transient failure.</p>
+            {fallbacks.map((f,i) => <div key={i} className="space-y-2 rounded-xl bg-side p-2 ring-1 ring-line"><div className="flex justify-between gap-2"><span className="text-xs text-mute">Alternate {i+1}</span><button type="button" className="text-xs text-mute underline" onClick={() => setConfig({ fallbackModels:fallbacks.filter((_,j) => i !== j) })}>Remove</button></div><Field label="Provider"><select className={inputClass} value={f.providerId} onChange={(e) => changeFallback(i,{providerId:e.target.value as ModelProviderId,model:""})}>{providers.filter((p) => !modelConfig.localOnly || p.id === "ollama").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><Field label="Model ID"><input className={inputClass} value={f.model} onChange={(e) => changeFallback(i,{model:e.target.value})} /></Field><Field label="Preferred task (automatic mode)"><select className={inputClass} value={f.preferredCategory ?? ""} onChange={(e) => changeFallback(i,{preferredCategory:e.target.value ? e.target.value as TaskCategory : undefined})}><option value="">Fallback only</option>{categories.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field></div>)}
+          </div>
+          <p className="text-xs text-faint">{state.status?.mock ? "MOCK mode is active until an owner configures a live provider." : "Only configured, allowlisted live models can run."} Hard monetary budgets are not supported.</p>
         </div>
 
         <div>

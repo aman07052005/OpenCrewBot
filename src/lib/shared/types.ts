@@ -34,6 +34,8 @@ export interface Bot {
   emoji: string;
   color: string;
   model: string;
+  /** Owner-controlled routing preferences. Legacy bots retain `model` as Nebius fixed mode. */
+  modelConfig?: AgentModelConfig;
   tools: BotTools;
   /** Connection ids this bot may use: `composio:<toolkit>` or `mcp:<serverId>`. */
   connections: string[];
@@ -43,6 +45,32 @@ export interface Bot {
   agentConfig?: AgentFactoryMetadata;
   pinned: boolean;
   createdAt: string;
+}
+
+export type ModelProviderId = "nebius" | "openai-compatible" | "ollama" | "mock";
+export type ModelRoutingMode = "fixed" | "automatic";
+export type TaskCategory = "general" | "planning" | "research" | "coding" | "math" | "writing" | "structured" | "tools";
+export interface AgentModelConfig {
+  providerId: ModelProviderId;
+  primaryModel: string;
+  routingMode: ModelRoutingMode;
+  fallbackModels?: Array<{ providerId: ModelProviderId; model: string; preferredCategory?: TaskCategory }>;
+  localOnly?: boolean;
+  maxOutputTokens?: number;
+  maxEstimatedCostUsd?: number;
+}
+export interface ModelProviderStatus {
+  id: ModelProviderId; name: string; kind: "hosted" | "local" | "simulated";
+  status: "unconfigured" | "configured-unverified" | "verified" | "failed";
+  models: ModelOption[]; lastVerifiedAt: string | null; error: string | null;
+}
+export interface ModelRoute { providerId: ModelProviderId; model: string; category: TaskCategory; reason: string; fallbackAttempt: number; }
+export interface ModelUsageRecord {
+  id: string; agentId: string; conversationId: string | null; executionRunId: string | null; taskId: string | null;
+  providerId: ModelProviderId; model: string; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+  usageKind: "reported" | "estimated" | "unknown" | "simulated"; durationMs: number | null; success: boolean;
+  cachedInputTokens?: number | null; reasoningTokens?: number | null;
+  fallbackAttempt: number; estimatedCostUsd: number | null; currency: string; pricingVersion: string | null; createdAt: string; error: string | null; routingReason: string;
 }
 
 export type AgentFactoryGenerationMode = "mock" | "live" | "template";

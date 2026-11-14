@@ -8,11 +8,11 @@ import type { MastraBrowser } from "@mastra/core/browser";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
 import { randomUUID } from "node:crypto";
-import type { Bot, ChatMessage, ConversationId, Part, RouteNote } from "@/lib/shared/types";
+import type { Bot, ChatMessage, ConversationId, ModelRoute, Part, RouteNote } from "@/lib/shared/types";
 import { MASTRA_DB_URL, OWNER_ID, isMock } from "./config";
 import { conversationGeneration, getBot, saveMessage } from "./db";
 import { publish } from "./bus";
-import { costUsd, findModel } from "./models";
+import { findModel } from "./models";
 import { createMockModel } from "./mock-model";
 import { announceLiveView, createSession, releaseSession } from "./browserbase";
 import { buildConnectorTools, connectionsVersion } from "./connectors";
@@ -21,11 +21,15 @@ import { conversationSharedMemory } from "./scoped-memory-service";
 import { buildExecutionTools, buildTools, toolCategory, toolLabel, toolPreview, toolSources } from "./tools";
 import { executionToolCategory, restrictExecutionPermissions } from "./execution-permissions";
 import type { ExecutionTask } from "./execution-engine";
+import { resolveModelRoute, resolveModelRoutes } from "./model-routing";
+import { recordModelUsage } from "./model-usage";
+import { estimatedCost, extractProviderUsage, isTransientModelError, languageModelFor } from "./provider-runtime";
 
 // ── shared state that must survive Next.js hot reloads ─────────────────
 
 interface BotRuntime {
   signature: string;
+  modelRoute: ModelRoute;
   /** The latest saved bot; the system prompt reads it on every model call. */
   holder: { bot: Bot };
   controller: AgentController;
@@ -49,7 +53,8 @@ interface State {
   stopEpoch: Map<ConversationId, number>;
 }
 
-const g = globalThis as unknown as { __opencrewbotRuntime?: State };
+const g = globalThis as unknown as { __opencrewbotRuntime?: State; __opencrewbotRuntimeLocks?: Map<string, Promise<unknown>> };
+const runtimeLocks = (g.__opencrewbotRuntimeLocks ??= new Map());
 const state: State = (g.__opencrewbotRuntime ??= {
   storage: new LibSQLStore({ id: "opencrewbot-mastra", url: MASTRA_DB_URL }),
   runtimes: new Map(),
@@ -67,10 +72,10 @@ const key = (conversationId: ConversationId, botId: string) => `${conversationId
 /** Settings that need a new controller when they change. Persona text doesn't:
  * the system prompt is rebuilt from the latest bot on every model call. */
 async function signatureOf(bot: Bot): Promise<string> {
-  // The model isn't here: it's read from the latest bot on every call, so a
-  // model switch applies to the next reply without dropping any sessions.
-  // Connections are, along with a version that bumps when any app or server changes.
+  // Model objects are captured by Agent construction; changing settings requires a new controller.
   return JSON.stringify({
+    model: bot.model,
+    modelConfig: bot.modelConfig,
     tools: bot.tools,
     approval: bot.approval,
     connections: bot.connections,
@@ -81,10 +86,10 @@ async function signatureOf(bot: Bot): Promise<string> {
 
 /** A Browserbase cloud browser, reached over CDP. The session starts on the
  * bot's first browser action and is released when its controller closes. */
-async function createBrowser(bot: Bot): Promise<MastraBrowser | undefined> {
+async function createBrowser(bot: Bot, route: ModelRoute): Promise<MastraBrowser | undefined> {
   if (!bot.tools.browser) return undefined;
   const { AgentBrowser } = await import("@mastra/agent-browser");
-  const model = isMock() ? undefined : await findModel(bot.model);
+  const model = route.providerId === "nebius" ? await findModel(route.model) : undefined;
   return new AgentBrowser({
     cdpUrl: () => createSession(bot.id),
     scope: "shared",
@@ -95,7 +100,7 @@ async function createBrowser(bot: Bot): Promise<MastraBrowser | undefined> {
   }) as unknown as MastraBrowser;
 }
 
-async function buildRuntime(bot: Bot): Promise<BotRuntime> {
+async function buildRuntime(bot: Bot, route: ModelRoute): Promise<BotRuntime> {
   const holder = { bot };
   const memory = new Memory({ storage: state.storage, options: { lastMessages: 40 } });
   const builtIn = buildTools(bot);
@@ -105,11 +110,12 @@ async function buildRuntime(bot: Bot): Promise<BotRuntime> {
     id: `bot-${bot.id}`,
     name: bot.name,
     instructions: () => systemPrompt(holder.bot, capabilities, builtIn.instructions),
-    model: isMock() ? createMockModel(bot.name) : () => `nebius/${holder.bot.model}`,
+    model: isMock() ? createMockModel(bot.name) : languageModelFor(route),
+    defaultOptions: bot.modelConfig?.maxOutputTokens ? { modelSettings: { maxOutputTokens: bot.modelConfig.maxOutputTokens } } : undefined,
     tools: { ...connectors.tools, ...builtIn.tools },
     memory,
   });
-  const browser = await createBrowser(bot);
+  const browser = await createBrowser(bot, route);
   const controller = new AgentController({
     id: `controller-${bot.id}`,
     agent,
@@ -127,7 +133,7 @@ async function buildRuntime(bot: Bot): Promise<BotRuntime> {
       ...(bot.tools.askUser ? [] : (["ask_user"] as const)),
     ],
   });
-  return { signature: await signatureOf(bot), holder, controller, ready: controller.init(), closeConnectors: connectors.close };
+  return { signature: await signatureOf(bot), modelRoute:route, holder, controller, ready: controller.init(), closeConnectors: connectors.close };
 }
 
 function isBotBusy(botId: string): boolean {
@@ -145,14 +151,16 @@ async function dropRuntime(botId: string): Promise<void> {
   await releaseSession(botId);
 }
 
-async function runtimeFor(bot: Bot): Promise<BotRuntime> {
+async function runtimeFor(bot: Bot, conversationId: ConversationId, modelRoute: ModelRoute): Promise<BotRuntime> {
   let runtime = state.runtimes.get(bot.id);
-  if (runtime && runtime.signature !== (await signatureOf(bot)) && !isBotBusy(bot.id)) {
+  if (runtime && (runtime.signature !== (await signatureOf(bot)) || runtime.modelRoute?.providerId !== modelRoute.providerId || runtime.modelRoute?.model !== modelRoute.model)) {
+    // The current turn is already registered as running. Never destroy another active conversation.
+    if ([...state.running].some(([id, bots]) => id !== conversationId && bots.has(bot.id))) throw new Error("Another conversation is using this agent. Finish that turn before switching models.");
     await dropRuntime(bot.id);
     runtime = undefined;
   }
   if (!runtime) {
-    runtime = await buildRuntime(bot);
+    runtime = await buildRuntime(bot, modelRoute);
     state.runtimes.set(bot.id, runtime);
   }
   runtime.holder.bot = bot;
@@ -160,8 +168,15 @@ async function runtimeFor(bot: Bot): Promise<BotRuntime> {
   return runtime;
 }
 
-async function sessionFor(bot: Bot, conversationId: ConversationId): Promise<Session> {
-  const runtime = await runtimeFor(bot);
+async function sessionFor(bot: Bot, conversationId: ConversationId, modelRoute: ModelRoute): Promise<Session> {
+  const previous = runtimeLocks.get(bot.id) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(() => openSession(bot, conversationId, modelRoute));
+  runtimeLocks.set(bot.id, next);
+  try { return await next; } finally { if (runtimeLocks.get(bot.id) === next) runtimeLocks.delete(bot.id); }
+}
+
+async function openSession(bot: Bot, conversationId: ConversationId, modelRoute: ModelRoute): Promise<Session> {
+  const runtime = await runtimeFor(bot, conversationId, modelRoute);
   const generation = await conversationGeneration(conversationId);
   const threadId = `${conversationId}:${bot.id}:${generation}`;
   const k = key(conversationId, bot.id);
@@ -195,10 +210,27 @@ export interface IsolatedExecutionResult {
 
 /** Run one live task in a fresh controller, session, resource, and thread. */
 export async function runIsolatedExecutionTask(request: IsolatedExecutionRequest): Promise<IsolatedExecutionResult> {
-  if (!process.env.NEBIUS_API_KEY) throw new Error("Live task execution requires NEBIUS_API_KEY; no mock fallback was used.");
+  if (request.signal.aborted) throw request.signal.reason ?? new Error("Task cancelled.");
+  const routes = await resolveModelRoutes(request.bot, request.task.input);
+  let lastError: unknown;
+  for (const [index, route] of routes.entries()) {
+    try { return await runIsolatedExecutionAttempt(request, route); }
+    catch (error) {
+      lastError = error;
+      // A streamed response, cancellation, validation/auth error, or final attempt
+      // is not a safe inference boundary for a provider retry.
+      if (request.signal.aborted || index === routes.length - 1 || !isTransientModelError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All configured model attempts failed.");
+}
+
+async function runIsolatedExecutionAttempt(request: IsolatedExecutionRequest, route: ModelRoute): Promise<IsolatedExecutionResult> {
   if (request.signal.aborted) throw request.signal.reason ?? new Error("Task cancelled.");
 
-  const { bot, task, sessionId, signal } = request;
+  const { bot, task, signal } = request;
+  const sessionId = route.fallbackAttempt ? `${request.sessionId}:fallback:${route.fallbackAttempt}` : request.sessionId;
+  const began = Date.now();
   const safeTools = buildExecutionTools(bot);
   const capabilities = [
     ...safeTools.capabilities,
@@ -206,15 +238,16 @@ export async function runIsolatedExecutionTask(request: IsolatedExecutionRequest
   ];
   const memory = new Memory({ storage: state.storage, options: { lastMessages: 20 } });
   const agent = new Agent({
-    id: `execution-agent-${task.id}-${task.attempts}`,
+    id: `execution-agent-${task.id}-${task.attempts}-${route.fallbackAttempt}`,
     name: bot.name,
     instructions: () => systemPrompt(bot, capabilities, safeTools.instructions, { allowAskUser: false, memoryReadOnly: true }),
-    model: `nebius/${bot.model}`,
+    model: languageModelFor(route),
+    defaultOptions: bot.modelConfig?.maxOutputTokens ? { modelSettings: { maxOutputTokens: bot.modelConfig.maxOutputTokens } } : undefined,
     tools: safeTools.tools,
     memory,
   });
   const controller = new AgentController({
-    id: `execution-controller-${task.id}-${task.attempts}`,
+    id: `execution-controller-${task.id}-${task.attempts}-${route.fallbackAttempt}`,
     agent,
     storage: state.storage,
     modes: [{ id: "execution", name: "Execution", metadata: { default: true } }],
@@ -227,12 +260,15 @@ export async function runIsolatedExecutionTask(request: IsolatedExecutionRequest
   let endReason: "complete" | "aborted" | "error" | "suspended" | undefined;
   let runtimeError: string | undefined;
   let text = "";
+  let toolActivity = false;
+  let reasoningActivity = false;
+  let latestUsage: unknown = null;
   let abortListener: (() => void) | undefined;
 
   try {
     await controller.init();
     session = await controller.createSession({
-      resourceId: `execution:${task.id}:${task.attempts}`,
+      resourceId: sessionId,
       ownerId: OWNER_ID,
       id: sessionId,
       scope: sessionId,
@@ -242,6 +278,9 @@ export async function runIsolatedExecutionTask(request: IsolatedExecutionRequest
     await restrictExecutionPermissions(session.permissions);
     unsubscribe = session.subscribe((event) => {
       if (event.type === "message_update" && event.event.type === "text-delta") text += event.event.delta;
+      if (event.type === "message_update" && event.event.type === "reasoning-delta") reasoningActivity = true;
+      if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_approval_required" || event.type === "tool_suspended") toolActivity = true;
+      if (event.type === "usage_update") latestUsage = event.usage;
       if (event.type === "agent_end") endReason = event.reason;
       if (event.type === "error") runtimeError = event.error?.message || "Mastra agent execution failed.";
     });
@@ -263,7 +302,16 @@ export async function runIsolatedExecutionTask(request: IsolatedExecutionRequest
         : endReason === "aborted" ? "Mastra execution was aborted." : "Mastra ended without a successful completion event."));
     }
     if (!text.trim()) throw new Error(runtimeError ?? "Mastra completed without producing text output.");
-    return { text: text.trim(), model: bot.model };
+    const usage = extractProviderUsage(latestUsage); const pricing = await estimatedCost(route, usage);
+    await recordModelUsage({ agentId:bot.id, conversationId:null, executionRunId:task.runId, taskId:task.id, providerId:route.providerId, model:route.model, inputTokens:usage.inputTokens, outputTokens:usage.outputTokens, totalTokens:usage.totalTokens, cachedInputTokens:usage.cachedInputTokens, reasoningTokens:usage.reasoningTokens, usageKind:usage.totalTokens === null ? "unknown" : "reported", durationMs:Date.now()-began, success:true, fallbackAttempt:route.fallbackAttempt, estimatedCostUsd:pricing.cost, currency:"USD", pricingVersion:pricing.pricingVersion, routingReason:route.reason, error:null }).catch((err: unknown) => console.error("Model usage persistence failed", err instanceof Error ? err.name : "error"));
+    return { text: text.trim(), model: route.model };
+  } catch (error) {
+    const usage = extractProviderUsage(latestUsage);
+    const pricing = await estimatedCost(route, usage).catch(() => ({ cost:null, pricingVersion:null }));
+    await recordModelUsage({ agentId:bot.id, conversationId:null, executionRunId:task.runId, taskId:task.id, providerId:route.providerId, model:route.model, ...usage, usageKind:usage.totalTokens !== null || usage.inputTokens !== null || usage.outputTokens !== null ? "reported" : "unknown", durationMs:Date.now()-began, success:false, fallbackAttempt:route.fallbackAttempt, estimatedCostUsd:pricing.cost, currency:"USD", pricingVersion:pricing.pricingVersion, routingReason:route.reason, error:"Model call failed" }).catch((err: unknown) => console.error("Model usage persistence failed", err instanceof Error ? err.name : "error"));
+    if (toolActivity) throw new Error("Tool activity occurred; fallback is suppressed to avoid replaying an uncertain run.");
+    if (text.length || reasoningActivity) throw new Error("Partial model output was received; fallback is suppressed to avoid replaying an uncertain run.");
+    throw error;
   } finally {
     if (abortListener) signal.removeEventListener("abort", abortListener);
     unsubscribe?.();
@@ -299,13 +347,15 @@ class TurnFolder {
   private textPart = new Map<string, number>();
   private reasoningPart = new Map<string, number>();
   private toolPart = new Map<string, number>();
-  private input = 0;
-  private output = 0;
+  private usage = extractProviderUsage(null);
+  private modelRoute?: ModelRoute;
+  private readonly bot: Bot;
   private resolveDone!: (m: ChatMessage) => void;
   readonly done = new Promise<ChatMessage>((r) => (this.resolveDone = r));
   finished = false;
 
   constructor(conversationId: ConversationId, bot: Bot, route?: RouteNote) {
+    this.bot = bot;
     this.message = {
       id: randomUUID(),
       conversationId,
@@ -314,9 +364,15 @@ class TurnFolder {
       createdAt: new Date().toISOString(),
       status: "streaming",
       parts: [],
-      model: isMock() ? "mock" : bot.model,
+      model: isMock() ? "mock" : (bot.modelConfig?.primaryModel ?? bot.model),
       route,
     };
+  }
+
+  setModelRoute(route: ModelRoute) {
+    this.modelRoute = route;
+    this.message.model = route.model;
+    this.emit(true);
   }
 
   private emit(persist = false) {
@@ -401,9 +457,8 @@ class TurnFolder {
         break;
       }
       case "usage_update": {
-        const u = event.usage as { promptTokens?: number; completionTokens?: number };
-        this.input += u.promptTokens ?? 0;
-        this.output += u.completionTokens ?? 0;
+        // Cumulative snapshots: never sum successive events or turn unknown into zero.
+        this.usage = extractProviderUsage(event.usage);
         break;
       }
       case "error": {
@@ -440,11 +495,12 @@ class TurnFolder {
         p.status = status === "stopped" ? "denied" : "error";
       }
     }
-    if (this.message.model !== "mock") {
-      const model = await findModel(this.message.model ?? "");
-      this.message.usage = { input: this.input, output: this.output, costUsd: costUsd(model, this.input, this.output) };
-    } else {
-      this.message.usage = { input: this.input, output: this.output, costUsd: null };
+    const route = this.modelRoute;
+    if (route) {
+      const usage = this.usage;
+      const pricing = await estimatedCost(route, usage).catch(() => ({ cost:null, pricingVersion:null }));
+      await recordModelUsage({ agentId:this.bot.id, conversationId:this.message.conversationId, executionRunId:null, taskId:null, providerId:route.providerId, model:route.model, ...usage, usageKind:route.providerId === "mock" ? "simulated" : usage.totalTokens !== null || usage.inputTokens !== null || usage.outputTokens !== null ? "reported" : "unknown", durationMs:Date.now() - new Date(this.message.createdAt).getTime(), success:status === "done", fallbackAttempt:route.fallbackAttempt, estimatedCostUsd:pricing.cost, currency:"USD", pricingVersion:pricing.pricingVersion, routingReason:route.reason, error:status === "error" ? "Model execution failed; see conversation." : null }).catch((err: unknown) => console.error("Model usage persistence failed", err instanceof Error ? err.name : "error"));
+      if (usage.inputTokens !== null && usage.outputTokens !== null) this.message.usage = { input:usage.inputTokens, output:usage.outputTokens, costUsd:pricing.cost };
     }
     await saveMessage(this.message);
     publish({ type: "message", message: this.message });
@@ -489,7 +545,10 @@ async function executeTurn({ bot, conversationId, content, route }: TurnRequest)
 
   let unsubscribe: (() => void) | undefined;
   try {
-    const session = await sessionFor(latest, conversationId);
+    const modelRoute: ModelRoute = isMock() ? { providerId:"mock", model:"mock", category:"general", reason:"Deterministic mock mode.", fallbackAttempt:0 } : await resolveModelRoute(latest, content);
+    const session = await sessionFor(latest, conversationId, modelRoute);
+    if (folder.finished) return await folder.done;
+    folder.setModelRoute(modelRoute);
     unsubscribe = session.subscribe((event) => folder.handle(event));
     const shared = latest.tools.memory ? await conversationSharedMemory(latest.id, conversationId) : "";
     await session.sendMessage({ content: shared ? `${shared}\n\n## Current conversation message\n${content}` : content });

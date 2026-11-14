@@ -36,6 +36,7 @@ export function AgentFactoryForm({ onDone }: { onDone: (bot: Bot) => void }) {
   const generate = async () => {
     setError(null);
     setTemplateMessage(null);
+    setDraft(null);
     if (!description.trim()) return setError("Describe what you want this agent to do.");
     setWorking("generate");
     try {
@@ -110,11 +111,11 @@ export function AgentFactoryForm({ onDone }: { onDone: (bot: Bot) => void }) {
       </Field>
       <div className="space-y-2">
         <p className="text-[12.5px] font-medium text-mute">Generation mode</p>
-        <Segmented value={generationMode} onChange={setGenerationMode} options={[
+        <Segmented value={generationMode} onChange={(mode) => { if (working) return; setGenerationMode(mode); setDraft(null); setError(null); }} options={[
           { value: "mock", label: "MOCK · DETERMINISTIC", hint: "Local configuration rules; no model call." },
           { value: "live", label: "LIVE MODEL", hint: "Uses the configured Mastra model." },
         ]} />
-        {generationMode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Live generation calls a model and may incur a charge. It requires NEBIUS_API_KEY. If it fails, no mock configuration is substituted.</p>}
+        {generationMode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Live generation calls the owner-selected model and may incur a charge. If it fails, no mock configuration is substituted.</p>}
       </div>
       <Button variant="primary" onClick={() => void generate()} disabled={working !== null}><Sparkles size={14} />{working === "generate" ? "Generating…" : "Generate agent configuration"}</Button>
 
@@ -182,7 +183,7 @@ export function AgentFactoryForm({ onDone }: { onDone: (bot: Bot) => void }) {
           <Field label="Expected output format"><textarea className={clsx(inputClass, "min-h-20 resize-y")} value={draft.agentConfig.expectedOutputFormat} maxLength={1_000} onChange={(event) => update({ agentConfig: { ...draft.agentConfig, expectedOutputFormat: event.target.value } })} /></Field>
           <div>
             <p className="mb-1.5 text-[12.5px] font-medium text-mute">Reusable skill identifiers</p>
-            <p className="mb-2 text-[11px] leading-relaxed text-faint">Metadata only. Skill identifiers are saved for future modules and do not add executable behavior today.</p>
+            <p className="mb-2 text-[11px] leading-relaxed text-faint">Choose skills available to this agent in supported execution workflows. Some legacy identifiers remain descriptive metadata.</p>
             <div className="space-y-1.5">
               {AGENT_SKILLS.map((skill) => <label key={skill.id} className="flex items-start gap-2.5 text-[11px] text-mute"><input type="checkbox" checked={draft.agentConfig.skillIds.includes(skill.id)} onChange={(event) => toggleSkill(skill.id, event.target.checked)} /><span><span className="font-medium">{skill.label}</span><span className="ml-1 font-mono text-[10px] text-faint">{skill.id}</span></span></label>)}
             </div>

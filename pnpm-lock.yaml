@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@ai-sdk/openai-compatible':
+        specifier: 2.0.62
+        version: 2.0.62(zod@4.6.7)
       '@composio/core':
         specifier: ^0.23.0
         version: 0.23.0(ws@8.22.0)(zod@4.6.7)
@@ -125,6 +128,12 @@ packages:
         optional: true
       express:
         optional: true
+
+  '@ai-sdk/openai-compatible@2.0.62':
+    resolution: {integrity: sha512-lRe54zvyIS1a60N8UVhnwKZRI5I+GSV8uhKkPpId+aiKO7z7UgSbNqFmXkBBMD3yc9UrLnQnATV2EQyXNhzEkA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   '@ai-sdk/provider-utils@4.0.40':
     resolution: {integrity: sha512-OL5IrpUm9Y8Dwy+w/vvFwPotS6m52O9W0op2oXgXdCROMJIBalBI0oro6OIBYkPxvm5Xg02GSkoQN25RlR0bnw==}
@@ -3860,6 +3869,12 @@ snapshots:
     dependencies:
       jose: 6.2.12
       uuid: 11.1.1
+
+  '@ai-sdk/openai-compatible@2.0.62(zod@4.6.7)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.14
+      '@ai-sdk/provider-utils': 4.0.40(zod@4.6.7)
+      zod: 4.6.7
 
   '@ai-sdk/provider-utils@4.0.40(zod@4.6.7)':
     dependencies:

@@ -4,7 +4,7 @@ import { approveExecutionTask, cancelExecutionRun, createExecutionRun, getExecut
 import { executionTaskExecutor } from "./execution-adapter";
 import { InputError } from "./errors";
 import { db, listBots } from "./db";
-import { configuredExecutionMode, keys } from "./config";
+import { configuredExecutionMode, isMock, keys } from "./config";
 import {
   ChiefOfStaffRequestSchema,
   CreateChiefOfStaffRunSchema,
@@ -46,8 +46,8 @@ export async function planChiefOfStaffRequest(input: unknown) {
   } catch (error) {
     throw new InputError(error instanceof Error ? error.message : "Invalid Chief of Staff request.");
   }
-  if (request.planningMode === "live" && !keys.nebius()) {
-    throw new InputError("Live planning requires NEBIUS_API_KEY. Select mock planning for a deterministic development plan; no fallback is performed.");
+  if (request.planningMode === "live" && isMock()) {
+    throw new InputError("Live planning requires an owner-configured live provider. Select mock planning for a deterministic development plan; no fallback is performed.");
   }
   try {
     const agents = discoverAgentCapabilities(await listBots(), { tavilyAvailable: keys.tavily() });
@@ -139,7 +139,7 @@ export async function rejectTask(runId: string, taskId: string) {
 }
 
 function requireLiveKey(mode: ExecutionMode): void {
-  if (mode === "live" && !keys.nebius()) throw new InputError("This run is configured for live execution. Add NEBIUS_API_KEY and restart; mock output will not be substituted.");
+  if (mode === "live" && isMock()) throw new InputError("This run is configured for live execution. Configure an owner-selected live provider and restart; mock output will not be substituted.");
 }
 
 export async function cancelRun(id: string) {

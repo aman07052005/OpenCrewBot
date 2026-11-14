@@ -24,10 +24,12 @@ export const keys = {
   jev: () => Boolean(process.env.TYPESAFE_API_KEY),
   browserbase: () => Boolean(process.env.BROWSERBASE_API_KEY),
   composio: () => Boolean(process.env.COMPOSIO_API_KEY),
+  openaiCompatible: () => Boolean(process.env.OPENCREWBOT_OPENAI_COMPATIBLE_API_KEY && process.env.OPENCREWBOT_OPENAI_COMPATIBLE_BASE_URL),
 };
 
 /** Without a Nebius key, bots run on a scripted local model so the UI still works. */
-export const isMock = () => !keys.nebius();
+/** MOCK is selected only when no owner-configured live provider is available. */
+export const isMock = () => !keys.nebius() && !keys.openaiCompatible() && process.env.OPENCREWBOT_OLLAMA_ENABLED !== "1";
 
 export type ExecutionMode = "mock" | "live";
 

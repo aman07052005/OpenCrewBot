@@ -249,7 +249,7 @@ export async function generateAgentFactoryDraft(input: unknown, options: {
   if (request.generationMode === "mock") {
     output = mockOutput(request.description, options.modelIds, options.defaultModel);
   } else {
-    if (!options.generateLive) throw new AgentFactoryError("Live agent generation is unavailable. Configure NEBIUS_API_KEY and retry in live mode.");
+    if (!options.generateLive) throw new AgentFactoryError("Live agent generation is unavailable. Configure an owner-selected live provider and retry in live mode.");
     try {
       output = await options.generateLive({ description: request.description, modelIds: options.modelIds, skills: AGENT_SKILLS });
     } catch (error) {

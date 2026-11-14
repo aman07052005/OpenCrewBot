@@ -4,7 +4,7 @@ import type { CreateExecutionRunInput, CreateScheduledWorkflowInput, ScheduledOc
 import { db, listBots } from "./db";
 import { createExecutionRun, getExecutionRun, startExecutionRun, validateExecutionRunInput } from "./execution-engine";
 import { executionTaskExecutor } from "./execution-adapter";
-import { keys } from "./config";
+import { isMock } from "./config";
 import { InputError } from "./errors";
 import { nextWorkflowRun, validateTimezone, validateWorkflowSchedule } from "./workflow-schedule";
 import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
@@ -119,7 +119,7 @@ async function launchOccurrence(client: Client, workflow: ScheduledWorkflow, occ
   if (!claimed.rows[0]) return;
   try {
     const validated = await validatePlan(workflow.plan);
-    if (validated.plan.executionMode === "live" && !keys.nebius()) throw new InputError("Scheduled LIVE workflow requires NEBIUS_API_KEY; no mock fallback was used.");
+    if (validated.plan.executionMode === "live" && isMock()) throw new InputError("Scheduled LIVE workflow requires an owner-configured live provider; no mock fallback was used.");
     const run = await createExecutionRun(client, validated.plan, (runId): InStatement[] => [
       { sql: "UPDATE execution_runs SET scheduled_workflow_id=?,schedule_trigger=? WHERE id=?", args: [workflow.id, occurrence.trigger, runId] },
       { sql: "UPDATE scheduled_workflow_occurrences SET status='started',run_id=? WHERE id=? AND status='creating'", args: [runId, occurrence.id] },

@@ -3,7 +3,7 @@ import type { Bot, ChiefOfStaffPlan } from "../shared/types";
 import type { CollaborationDraft, CollaborationSession, RoomInstallResult } from "../shared/collaboration";
 import { ChiefOfStaffPlanSchema, discoverAgentCapabilities, planChiefOfStaff, validateChiefOfStaffPlan } from "./chief-of-staff";
 import { createLiveChiefOfStaffPlanGenerator } from "./chief-of-staff-model";
-import { keys } from "./config";
+import { isMock, keys } from "./config";
 import * as store from "./db";
 import { InputError } from "./errors";
 import { cancelRun, startRun } from "./execution-service";
@@ -31,7 +31,7 @@ async function roomMembers(roomId: string, ids: string[]): Promise<Bot[]> {
   return assertParticipants(ids, room.memberIds, await store.listBots());
 }
 function requireLive(mode: "mock" | "live") {
-  if (mode === "live" && !keys.nebius()) throw new Error("LIVE requires NEBIUS_API_KEY. No mock fallback is performed.");
+  if (mode === "live" && isMock()) throw new Error("LIVE requires an owner-configured live provider. No mock fallback is performed.");
 }
 function checkedPlan(draft: CollaborationDraft, members: Bot[]): ChiefOfStaffPlan {
   if (draft.mode !== draft.plan.planningMode) throw new Error("Planning and execution mode must match.");

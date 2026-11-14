@@ -1,7 +1,7 @@
 import { DEFAULT_MODEL, listModels } from "./models";
 import { createBot } from "./service";
 import { listBots } from "./db";
-import { keys } from "./config";
+import { isMock } from "./config";
 import { InputError } from "./errors";
 import { redactSecrets } from "./memory-files";
 import { createLiveAgentFactoryGenerator } from "./agent-factory-model";
@@ -12,7 +12,7 @@ const factory = createAgentFactoryService({
   createBot,
   listModels,
   defaultModel: DEFAULT_MODEL,
-  hasLiveKey: keys.nebius,
+  hasLiveKey: () => !isMock(),
   liveGenerator: createLiveAgentFactoryGenerator(),
   redactSecrets,
 });

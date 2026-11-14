@@ -4,7 +4,7 @@ import type { AppStatus, Bot, ChatMessage, ConversationId, ConversationSummary, 
 import { messagePreview } from "./format";
 
 export interface AppState {
-  view: "chat" | "executions" | "skills" | "approvals" | "schedules";
+  view: "chat" | "executions" | "skills" | "approvals" | "schedules" | "models";
   loaded: boolean;
   status: AppStatus | null;
   bots: Bot[];

@@ -16,6 +16,7 @@ import { recoverExecutionRuns } from "./execution-engine";
 import { executionTaskExecutor } from "./execution-adapter";
 import { AgentFactoryMetadataSchema, AgentToolsSchema } from "./agent-factory";
 import { createBotRecord } from "./bot-creation";
+import { validateModelConfig } from "./model-routing";
 
 export { InputError };
 
@@ -123,6 +124,7 @@ function validateBot(input: Partial<BotInput>) {
   if (input.description !== undefined && (typeof input.description !== "string" || input.description.length > 200)) throw new InputError("Keep the description under 200 characters.");
   if (input.instructions && input.instructions.length > 8000) throw new InputError("Instructions are limited to 8,000 characters.");
   if (input.model !== undefined && (typeof input.model !== "string" || !input.model.trim() || input.model.length > 200)) throw new InputError("Choose a valid model ID.");
+  if (input.modelConfig !== undefined) { try { validateModelConfig(input.modelConfig); } catch (error) { throw new InputError(error instanceof Error ? error.message : "Model configuration is invalid."); } }
   if (input.approval !== undefined && !["ask", "controlled", "full"].includes(input.approval)) throw new InputError("Permission level must be Ask First, Controlled Access, or Full access.");
   if (input.tools !== undefined) {
     const tools = AgentToolsSchema.safeParse(input.tools);

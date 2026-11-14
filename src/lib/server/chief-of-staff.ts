@@ -295,7 +295,7 @@ export async function planChiefOfStaff(input: unknown, options: {
   const request = ChiefOfStaffRequestSchema.parse(input);
   if (!options.agents.length) throw new ChiefOfStaffPlanningError("Create at least one agent before planning work.");
   if (request.planningMode === "mock") return deterministicMockPlan(request.instruction, options.agents);
-  if (!options.generateLivePlan) throw new ChiefOfStaffPlanningError("Live planning is unavailable. Configure NEBIUS_API_KEY and retry in live planning mode.");
+  if (!options.generateLivePlan) throw new ChiefOfStaffPlanningError("Live planning is unavailable. Configure an owner-selected live provider and retry in live planning mode.");
   let output: unknown;
   try {
     output = await options.generateLivePlan({ instruction: request.instruction, agents: options.agents });
