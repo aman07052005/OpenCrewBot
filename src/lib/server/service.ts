@@ -123,10 +123,14 @@ function validateBot(input: Partial<BotInput>) {
   if (input.description !== undefined && (typeof input.description !== "string" || input.description.length > 200)) throw new InputError("Keep the description under 200 characters.");
   if (input.instructions && input.instructions.length > 8000) throw new InputError("Instructions are limited to 8,000 characters.");
   if (input.model !== undefined && (typeof input.model !== "string" || !input.model.trim() || input.model.length > 200)) throw new InputError("Choose a valid model ID.");
-  if (input.approval !== undefined && input.approval !== "ask" && input.approval !== "full") throw new InputError("Permission level must be Ask First or Full access.");
+  if (input.approval !== undefined && !["ask", "controlled", "full"].includes(input.approval)) throw new InputError("Permission level must be Ask First, Controlled Access, or Full access.");
   if (input.tools !== undefined) {
     const tools = AgentToolsSchema.safeParse(input.tools);
     if (!tools.success) throw new InputError("Tool settings must use the supported OpenCrewBot tools.");
+  }
+  if (input.permissionPolicy !== undefined) {
+    const policy = input.permissionPolicy;
+    if (!Array.isArray(policy.preapprovedOperations) || !policy.preapprovedOperations.every((item) => item === "simulated.email.send") || !Array.isArray(policy.allowedDestinations) || !policy.allowedDestinations.every((item) => /^[a-z0-9.-]+$/i.test(item)) || !Number.isInteger(policy.maxActionsPerDay) || policy.maxActionsPerDay < 0 || policy.maxActionsPerDay > 1000) throw new InputError("Permission policy must contain supported operations, safe destination domains, and a daily limit from 0 to 1000.");
   }
   if (input.agentConfig !== undefined) {
     const agentConfig = AgentFactoryMetadataSchema.safeParse(input.agentConfig);

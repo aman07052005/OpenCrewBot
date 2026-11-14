@@ -15,6 +15,7 @@ import { ConnectionsPanel } from "./ConnectionsPanel";
 import { MemoryManager } from "./MemoryManager";
 import { ExecutionDashboard } from "./ExecutionDashboard";
 import { SkillsManager } from "./SkillsManager";
+import { ApprovalsManager } from "./ApprovalsManager";
 
 /** Modal sheets. Editing an existing bot or room happens in the inspector instead. */
 export type Panel = { kind: "new-bot" } | { kind: "new-room" } | { kind: "settings" } | { kind: "connections" } | { kind: "memory" } | null;
@@ -32,6 +33,7 @@ interface AppContext {
   open: (id: ConversationId | null) => void;
   openExecutions: (runId?: string) => void;
   openSkills: () => void;
+  openApprovals: () => void;
   refresh: () => Promise<void>;
   setPanel: (panel: Panel) => void;
   inspector: InspectorState;
@@ -142,6 +144,7 @@ export function OpenCrewBotApp() {
     dispatch({ type: "view", view: "skills" });
     if (window.location.hash !== "#skills") window.history.replaceState(null, "", "#skills");
   }, []);
+  const openApprovals = useCallback(() => { dispatch({ type: "view", view: "approvals" }); if (window.location.hash !== "#approvals") window.history.replaceState(null, "", "#approvals"); }, []);
 
   // First load: data, then the conversation from the URL (or the first pinned bot on wide screens).
   useEffect(() => {
@@ -162,6 +165,7 @@ export function OpenCrewBotApp() {
         const fromHash = decodeURIComponent(window.location.hash.slice(1));
         const ids = new Set(data.conversations.map((c) => c.id));
         if (fromHash === "skills") dispatch({ type: "view", view: "skills" });
+        else if (fromHash === "approvals") dispatch({ type: "view", view: "approvals" });
         else if (fromHash === "executions" || fromHash.startsWith("executions:")) {
           setExecutionTarget(fromHash.startsWith("executions:") ? fromHash.slice("executions:".length) : null);
           dispatch({ type: "view", view: "executions" });
@@ -211,8 +215,8 @@ export function OpenCrewBotApp() {
   }, [state.active, activeUnreadMarker]);
 
   const value = useMemo(
-    () => ({ state, dispatch, open, openExecutions, openSkills, refresh, setPanel, inspector, setInspector, sidebarOpen, setSidebarOpen, toast }),
-    [state, open, openExecutions, openSkills, refresh, inspector, setInspector, sidebarOpen, setSidebarOpen, toast],
+    () => ({ state, dispatch, open, openExecutions, openSkills, openApprovals, refresh, setPanel, inspector, setInspector, sidebarOpen, setSidebarOpen, toast }),
+    [state, open, openExecutions, openSkills, openApprovals, refresh, inspector, setInspector, sidebarOpen, setSidebarOpen, toast],
   );
   const showInspector = state.view === "chat" && inspector.open && Boolean(state.active);
 
@@ -222,14 +226,14 @@ export function OpenCrewBotApp() {
         <div
           className={clsx(
             "h-full shrink-0 border-r border-line",
-            state.view === "executions" || state.view === "skills" ? "hidden md:flex md:w-[312px]" : state.active ? "hidden" : "flex w-full",
+            state.view === "executions" || state.view === "skills" || state.view === "approvals" ? "hidden md:flex md:w-[312px]" : state.active ? "hidden" : "flex w-full",
             sidebarOpen ? "md:flex md:w-[312px]" : "md:hidden",
           )}
         >
           <Sidebar />
         </div>
-        <main className={clsx("relative h-full min-w-0 flex-1", state.view === "executions" || state.view === "skills" || state.active ? "flex" : "hidden md:flex")}>
-          {state.view === "executions" ? <ExecutionDashboard key={executionTarget ?? "all"} initialRunId={executionTarget} /> : state.view === "skills" ? <SkillsManager /> : <ChatView />}
+        <main className={clsx("relative h-full min-w-0 flex-1", state.view === "executions" || state.view === "skills" || state.view === "approvals" || state.active ? "flex" : "hidden md:flex")}>
+          {state.view === "executions" ? <ExecutionDashboard key={executionTarget ?? "all"} initialRunId={executionTarget} /> : state.view === "skills" ? <SkillsManager /> : state.view === "approvals" ? <ApprovalsManager /> : <ChatView />}
         </main>
         {showInspector && (
           <>

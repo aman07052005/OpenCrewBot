@@ -172,8 +172,10 @@ async function sessionFor(bot: Bot, conversationId: ConversationId): Promise<Ses
   await session.permissions.setForCategory({ category: "edit", policy: "allow" });
   await session.permissions.setForCategory({ category: "other", policy: "allow" });
   // Connected apps and MCP servers act on real accounts: ask first unless the bot has full access.
-  await session.permissions.setForCategory({ category: "mcp", policy: bot.approval === "full" ? "allow" : "ask" });
-  await session.permissions.setForCategory({ category: "execute", policy: bot.approval === "full" ? "allow" : "ask" });
+  // These provider-level actions are not persistent Module G action records yet.
+  // Keep their existing human prompt even for Full Access rather than bypassing the central boundary.
+  await session.permissions.setForCategory({ category: "mcp", policy: "ask" });
+  await session.permissions.setForCategory({ category: "execute", policy: "ask" });
   state.sessions.set(k, session);
   return session;
 }

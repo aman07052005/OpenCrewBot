@@ -175,6 +175,7 @@ export function AgentFactoryForm({ onDone }: { onDone: (bot: Bot) => void }) {
           <Field label="Permission level" hint="New configurations start at Ask First. Full access requires your explicit selection here.">
             <Segmented value={draft.approval} onChange={(approval) => update({ approval })} options={[
               { value: "ask", label: "ASK FIRST", hint: "Existing approval prompts remain enabled." },
+              { value: "controlled", label: "CONTROLLED", hint: "Only preapproved scoped actions may proceed." },
               { value: "full", label: "FULL ACCESS", hint: "Uses the existing full-access setting." },
             ]} />
           </Field>

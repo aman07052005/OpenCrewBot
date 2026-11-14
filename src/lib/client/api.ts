@@ -2,6 +2,7 @@ import type { MemoryCatalog, MemoryDocument, MemoryTarget } from "@/lib/shared/s
 import type { CollaborationDraft, CollaborationSession, RoomInstallResult } from "@/lib/shared/collaboration";
 import type {
   AppStatus,
+  ActionRequest,
   Bot,
   BotInput,
   ChatMessage,
@@ -105,4 +106,8 @@ export const api = {
   rejectExecutionTask: (runId: string, taskId: string) =>
     call<{ task: ExecutionTask }>(`/api/execution-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/reject`, { method: "POST" }),
   skills: () => call<{ skills: Array<{ id: string; label: string; description: string; implemented: boolean }> }>("/api/skills"),
+  actions: (status?: string) => call<{ actions: ActionRequest[] }>(`/api/actions${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  decideAction: (id: string, decision: "approve" | "reject" | "cancel") => call<{ action: ActionRequest }>(`/api/actions/${encodeURIComponent(id)}`, { method: "POST", json: { decision } }),
+  executeAction: (id: string) => call<{ action: ActionRequest }>(`/api/actions/${encodeURIComponent(id)}`, { method: "POST", json: { execute: true } }),
+  proposeAction: (input: { agentId: string; operation: string; arguments: unknown }) => call<{ action: ActionRequest }>("/api/actions", { method: "POST", json: input }),
 };

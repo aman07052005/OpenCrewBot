@@ -1,6 +1,14 @@
 // Types shared by the server and the browser. Everything here is plain JSON.
 
-export type ApprovalMode = "ask" | "full";
+export type ApprovalMode = "ask" | "controlled" | "full";
+
+export type ActionStatus = "pending" | "approved" | "rejected" | "executing" | "succeeded" | "failed" | "cancelled" | "expired";
+export interface PermissionPolicy { preapprovedOperations: string[]; allowedDestinations: string[]; maxActionsPerDay: number; }
+export interface ActionRequest {
+  id: string; agentId: string; conversationId: string | null; executionRunId: string | null; executionTaskId: string | null;
+  tool: string; operation: string; arguments: unknown; preview: string; permissionLevel: ApprovalMode;
+  decision: "allowed" | "approval-required" | "denied"; reason: string; status: ActionStatus; createdAt: string; expiresAt: string | null; decidedAt: string | null; result: unknown; error: string | null; simulated: boolean; invocationCount: number; audit?: Array<{ event: string; reason: string; createdAt: string }>;
+}
 
 export interface BotTools {
   /** Tavily search, extract and crawl. */
@@ -30,6 +38,7 @@ export interface Bot {
   /** Connection ids this bot may use: `composio:<toolkit>` or `mcp:<serverId>`. */
   connections: string[];
   approval: ApprovalMode;
+  permissionPolicy?: PermissionPolicy;
   /** Optional Agent Factory metadata. Older/manual bot records remain valid without it. */
   agentConfig?: AgentFactoryMetadata;
   pinned: boolean;

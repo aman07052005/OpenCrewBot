@@ -43,7 +43,7 @@ export async function buildConnectorTools(bot: Bot, clientId: string): Promise<C
     try {
       Object.assign(tools, await composioTools(composioSlugs));
       capabilities.push(
-        `Use the person's connected apps (${composioSlugs.map(appName).join(", ")}): find the right action with COMPOSIO_SEARCH_TOOLS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Actions ask the person first unless you have full access. If an app isn't connected, tell them to connect it in Connections.`,
+        `Use the person's connected apps (${composioSlugs.map(appName).join(", ")}): find the right action with COMPOSIO_SEARCH_TOOLS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Connected-app actions always ask the person first until they are migrated into persistent approvals. If an app isn't connected, tell them to connect it in Connections.`,
       );
     } catch (error) {
       capabilities.push(`Connected apps are switched on for you but couldn't load right now (${error instanceof Error ? error.message : "unknown error"}). Say so if asked.`);
@@ -60,7 +60,7 @@ export async function buildConnectorTools(bot: Bot, clientId: string): Promise<C
     close = result.close;
     const names = servers.filter((s) => mcpIds.includes(s.id)).map((s) => s.name);
     if (Object.keys(result.tools).length) {
-      capabilities.push(`Use tools from ${names.join(", ")} (the mcp_* tools). Actions that change things ask the person first unless you have full access.`);
+      capabilities.push(`Use tools from ${names.join(", ")} (the mcp_* tools). Actions that change things always ask the person first until they are migrated into persistent approvals.`);
     }
     for (const e of result.errors) capabilities.push(`Couldn't connect to ${e}. Say so if asked.`);
   }

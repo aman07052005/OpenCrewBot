@@ -66,7 +66,7 @@ export const AgentFactoryDraftSchema = z.object({
   model: z.string().trim().min(1).max(200),
   tools: AgentToolsSchema,
   connections: z.array(z.string().max(160)).max(40),
-  approval: z.enum(["ask", "full"]),
+  approval: z.enum(["ask", "controlled", "full"]),
   pinned: z.boolean(),
   agentConfig: AgentFactoryMetadataSchema,
   generationLabel: z.string().trim().min(1).max(120),
