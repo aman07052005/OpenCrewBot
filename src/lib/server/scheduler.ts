@@ -1,4 +1,5 @@
 import { tickScheduledWorkflows } from "./scheduled-workflows";
+import { tickAutomaticCollaborations } from "./collaboration-service";
 
 const INTERVAL_MS = 30_000;
 const g = globalThis as unknown as { __opencrewbotScheduler?: ReturnType<typeof setInterval>; __opencrewbotSchedulerTick?: Promise<void> };
@@ -14,8 +15,8 @@ export function startScheduler(): void {
   if (!allowed() || g.__opencrewbotScheduler) return;
   const tick = () => {
     if (g.__opencrewbotSchedulerTick) return;
-    g.__opencrewbotSchedulerTick = tickScheduledWorkflows().catch((error) => {
-      console.error("[opencrewbot scheduler]", error);
+    g.__opencrewbotSchedulerTick = Promise.allSettled([tickScheduledWorkflows(), tickAutomaticCollaborations()]).then((results) => {
+      for (const result of results) if (result.status === "rejected") console.error("[opencrewbot scheduler]", result.reason);
     }).finally(() => { g.__opencrewbotSchedulerTick = undefined; });
   };
   tick();

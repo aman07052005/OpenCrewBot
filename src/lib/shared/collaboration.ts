@@ -30,6 +30,10 @@ export interface CollaborationSession {
   messages: CollaborationMessage[];
   status: "pending" | "running" | "blocked" | "awaiting_next" | "interrupted" | "failed" | "completed" | "cancelled";
   finalDeliverable: unknown;
+  autoAdvance: boolean;
+  autoError: string | null;
+  /** Opaque server-issued lease required to save an instruction revision. */
+  revisionToken: string | null;
 }
 export interface CollaborationDraft {
   instruction: string;

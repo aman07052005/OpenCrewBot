@@ -7,7 +7,7 @@ import { isMock, keys } from "./config";
 import * as store from "./db";
 import { InputError } from "./errors";
 import { cancelRun, startRun } from "./execution-service";
-import { advanceSession, assertParticipants, closeSession, continueSession, createSession, getSession, listSessions, resumeSession } from "./collaboration-store";
+import { advanceSession, advanceAutomatically, assertAutomaticParticipants, automaticSessionIds, assertParticipants, beginRevision, closeSession, continueSession, createSession, discardRevision, getSession, listSessions, resumeSession, setAutomaticAdvance } from "./collaboration-store";
 import { COLLABORATION_LIMITS as L } from "./collaboration-protocol";
 import { publish } from "./bus";
 import { installRoomTemplates } from "./collaboration-templates";
@@ -16,11 +16,15 @@ const RequestSchema = z.object({ instruction: z.string().trim().min(1).max(12_00
 const DraftSchema = RequestSchema.extend({ plan: ChiefOfStaffPlanSchema }).strict();
 const ActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("start") }).strict(),
+  z.object({ action: z.literal("start-auto") }).strict(),
+  z.object({ action: z.literal("pause-auto") }).strict(),
+  z.object({ action: z.literal("begin-revision") }).strict(),
+  z.object({ action: z.literal("discard-revision"), revisionToken: z.string().uuid() }).strict(),
   z.object({ action: z.literal("advance") }).strict(),
   z.object({ action: z.literal("interrupt") }).strict(),
   z.object({ action: z.literal("resume") }).strict(),
   z.object({ action: z.literal("cancel") }).strict(),
-  z.object({ action: z.literal("continue"), draft: DraftSchema }).strict(),
+  z.object({ action: z.literal("continue"), draft: DraftSchema, revisionToken: z.string().uuid() }).strict(),
 ]);
 async function validated<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } catch (e) { throw new InputError(e instanceof Error ? e.message : "Invalid collaboration request."); }
@@ -75,12 +79,22 @@ export async function collaborationAction(roomId: string, id: string, input: unk
     try {
       const action = ActionSchema.parse(input);
       const session = await inspectCollaboration(roomId, id);
-      if (session.status === "completed" || session.status === "cancelled") throw new Error("This session is closed or completed.");
+      if (session.status === "completed" || session.status === "cancelled") {
+        if (action.action === "continue" || action.action === "begin-revision") throw new Error("This session completed before the revision was saved. Completed sessions are immutable; start a new collaboration for additional work.");
+        throw new Error("This session is closed or completed.");
+      }
       const latest = session.rounds.at(-1)!;
       const client = await store.db();
+      if (action.action === "pause-auto") {
+        await setAutomaticAdvance(client, id, false);
+        return inspectCollaboration(roomId, id);
+      }
+      if (action.action === "begin-revision") return beginRevision(client, session);
+      if (action.action === "discard-revision") return discardRevision(client, session, action.revisionToken);
       if (action.action === "interrupt" || action.action === "cancel") {
+        await setAutomaticAdvance(client, id, false);
         if (["pending", "running", "blocked"].includes(latest.run.status)) await cancelRun(latest.run.id);
-        else if (action.action === "interrupt") throw new Error("The stage already stopped. Advance or submit a revised plan when ready.");
+        else if (action.action === "interrupt" && !session.autoAdvance) throw new Error("The stage already stopped. Advance or submit a revised plan when ready.");
         const stopped = await inspectCollaboration(roomId, id);
         if (action.action === "cancel") await closeSession(client, stopped);
         return inspectCollaboration(roomId, id);
@@ -88,16 +102,28 @@ export async function collaborationAction(roomId: string, id: string, input: unk
       const members = await roomMembers(roomId, session.memberIds);
       requireLive(session.mode);
       switch (action.action) {
+        case "start-auto": {
+          if (session.revisionToken) throw new Error("An instruction revision is open. Save or discard it before enabling automatic progression.");
+          if (!["pending", "awaiting_next", "running", "blocked"].includes(session.status)) throw new Error("Only an active or ready stage can enable automatic progression.");
+          assertAutomaticParticipants(session.mode, members);
+          await setAutomaticAdvance(client, id, true);
+          try { return await advanceAutomatically(client, await inspectCollaboration(roomId, id), members, startRun); }
+          catch (e) { await setAutomaticAdvance(client, id, false, "Automatic progression stopped. Review the stage and resume manually."); throw e; }
+        }
         case "start":
           if (session.status !== "pending") throw new Error("Only a pending stage can be started. Use the approval buttons for blocked tasks.");
           await startRun(latest.run.id);
           return inspectCollaboration(roomId, id);
         case "advance": return advanceSession(client, session, members);
-        case "resume": return resumeSession(client, session);
+        case "resume":
+          if (session.revisionToken) throw new Error("An instruction revision is open. Save or discard it before resuming tasks.");
+          await setAutomaticAdvance(client, id, false);
+          return resumeSession(client, session);
         case "continue": {
           const draft = action.draft;
           if (draft.mode !== session.mode || [...draft.memberIds].sort().join("\0") !== [...session.memberIds].sort().join("\0")) throw new Error("A continuation must use the same members and execution mode.");
-          return continueSession(client, session, { ...draft, plan: checkedPlan(draft, members) }, members);
+          await setAutomaticAdvance(client, id, false);
+          return continueSession(client, session, { ...draft, plan: checkedPlan(draft, members) }, members, action.revisionToken);
         }
       }
     } finally { busy.delete(id); }
@@ -111,4 +137,26 @@ export async function installCollaborationRooms(): Promise<RoomInstallResult> {
     if (result.installed.length) publish({ type: "rooms-changed" });
     return result;
   });
+}
+
+/** Server scheduler advances one stage per tick, even when no room tab is open. */
+export async function tickAutomaticCollaborations(): Promise<void> {
+  const client = await store.db();
+  for (const { id, roomId } of await automaticSessionIds(client)) {
+    if (busy.has(id)) continue;
+    busy.add(id);
+    try {
+      const session = await inspectCollaboration(roomId, id);
+      if (!session.autoAdvance) continue;
+      if (["completed", "cancelled", "failed", "interrupted"].includes(session.status)) {
+        await setAutomaticAdvance(client, id, false);
+        continue;
+      }
+      const members = await roomMembers(roomId, session.memberIds);
+      requireLive(session.mode);
+      await advanceAutomatically(client, session, members, startRun);
+    } catch {
+      await setAutomaticAdvance(client, id, false, "Automatic progression stopped. Review the stage, participant settings and provider configuration before resuming.");
+    } finally { busy.delete(id); }
+  }
 }

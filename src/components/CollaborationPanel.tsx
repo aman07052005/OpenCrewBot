@@ -21,6 +21,7 @@ export function CollaborationPanel({ room, members }: { room: Room; members: Bot
   const [mode, setMode] = useState<ExecutionMode>("mock");
   const [draft, setDraft] = useState<CollaborationDraft | null>(null);
   const [revising, setRevising] = useState(false);
+  const [revisionToken, setRevisionToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -67,7 +68,7 @@ export function CollaborationPanel({ room, members }: { room: Room; members: Bot
     try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  function reset() { setSelectedId(null); setDraft(null); setRevising(false); setInstruction(""); setMemberIds(room.memberIds.slice(0, 12)); setMode("mock"); setError(""); }
+  function reset() { setSelectedId(null); setDraft(null); setRevising(false); setRevisionToken(null); setInstruction(""); setMemberIds(room.memberIds.slice(0, 12)); setMode("mock"); setError(""); }
   function editTask(key: string, patch: Partial<ChiefOfStaffTask>) {
     setDraft((d) => d ? { ...d, plan: { ...d.plan, tasks: d.plan.tasks.map((t) => t.key === key ? { ...t, ...patch } : t) } } : d);
   }
@@ -84,7 +85,7 @@ export function CollaborationPanel({ room, members }: { room: Room; members: Bot
         {error && <p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm text-danger">{error}</p>}
         <div className="rounded-xl border border-line p-3">
           <label className="text-sm text-mute">Session history</label>
-          <select className={inputClass} value={selectedId ?? ""} disabled={busy || loading} onChange={(e) => { setSelectedId(e.target.value || null); setRevising(false); setDraft(null); setError(""); }}>
+          <select className={inputClass} value={selectedId ?? ""} disabled={busy || loading} onChange={(e) => { setSelectedId(e.target.value || null); setRevising(false); setRevisionToken(null); setDraft(null); setError(""); }}>
             <option value="">{loading ? "Loading sessions…" : "New collaboration"}</option>
             {sessions.map((s) => <option key={s.id} value={s.id}>{s.mode.toUpperCase()} · {s.status} · {s.objective.slice(0, 90)}</option>)}
           </select>
@@ -107,8 +108,8 @@ export function CollaborationPanel({ room, members }: { room: Room; members: Bot
               {!t.isFinalConsolidation && <div className="flex flex-wrap gap-2 text-xs text-mute">Dependencies: {draft.plan.tasks.filter((d) => d.key !== t.key && !d.isFinalConsolidation).map((d) => <label key={d.key}><input type="checkbox" checked={t.dependsOn.includes(d.key)} disabled={busy} onChange={(e) => editTask(t.key, { dependsOn: e.target.checked ? [...t.dependsOn, d.key] : t.dependsOn.filter((k) => k !== d.key) })} /> {d.key}</label>)}</div>}
               <p className="text-xs text-mute">{t.rationale}</p>
             </div>)}
-            <Button variant="primary" disabled={busy} onClick={() => void perform(async () => { const result = revising && session ? await api.collaborationAction(room.id, session.id, { action: "continue", draft }) : await api.createCollaboration(room.id, draft); update(result.session); setDraft(null); setRevising(false); })}>Save approved plan (does not start)</Button>
-            {revising && <Button variant="ghost" disabled={busy} onClick={() => { setRevising(false); setDraft(null); }}>Discard revision</Button>}
+            <Button variant="primary" disabled={busy || (revising && !revisionToken)} onClick={() => void perform(async () => { const result = revising && session && revisionToken ? await api.collaborationAction(room.id, session.id, { action: "continue", draft, revisionToken }) : await api.createCollaboration(room.id, draft); update(result.session); setDraft(null); setRevising(false); setRevisionToken(null); })}>Save approved plan (does not start)</Button>
+            {revising && <Button variant="ghost" disabled={busy} onClick={() => void perform(async () => { if (session && revisionToken) update((await api.collaborationAction(room.id, session.id, { action: "discard-revision", revisionToken })).session); setRevising(false); setDraft(null); setRevisionToken(null); })}>Discard revision</Button>}
           </div>}
         </div>}
         {session && latest && <>
@@ -117,14 +118,19 @@ export function CollaborationPanel({ room, members }: { room: Room; members: Bot
             <p className="whitespace-pre-wrap text-sm">{latest.instruction}</p>
             <p className="text-xs text-mute">{session.memberIds.map(name).join(" · ")}</p>
             <div className="flex flex-wrap gap-2">
-              {session.status === "pending" && <Button variant="primary" disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "start" })).session))}>Start stage</Button>}
-              {session.status === "awaiting_next" && <Button variant="primary" disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "advance" })).session))}>Prepare next stage</Button>}
+              {!session.autoAdvance && !session.revisionToken && ["pending", "awaiting_next"].includes(session.status) && <Button variant="primary" disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "start-auto" })).session))}>Run automatically</Button>}
+              {session.autoAdvance && !terminal && <Button disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "pause-auto" })).session))}>Pause automatic progression</Button>}
+              {session.status === "pending" && !session.autoAdvance && !session.revisionToken && <Button variant="primary" disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "start" })).session))}>Start stage</Button>}
+              {session.status === "awaiting_next" && !session.autoAdvance && !session.revisionToken && <Button variant="primary" disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "advance" })).session))}>Prepare next stage</Button>}
               {["pending", "running", "blocked"].includes(session.status) && <Button disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "interrupt" })).session))}>Interrupt</Button>}
-              {session.status === "interrupted" && <Button disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "resume" })).session))}>Resume unstarted tasks</Button>}
-              {canRevise && <Button disabled={busy || revising} onClick={() => { setRevising(true); setDraft(null); setInstruction(""); setMode(session.mode); setMemberIds(session.memberIds); }}>Revise instruction</Button>}
+              {session.status === "interrupted" && !session.revisionToken && <Button disabled={busy} onClick={() => void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "resume" })).session))}>Resume unstarted tasks</Button>}
+              {canRevise && <Button disabled={busy || revising} onClick={() => { const open = (updated: CollaborationSession) => { update(updated); setRevisionToken(updated.revisionToken); setRevising(true); setDraft(null); setInstruction(""); setMode(updated.mode); setMemberIds(updated.memberIds); }; if (session.revisionToken) open(session); else void perform(async () => open((await api.collaborationAction(room.id, session.id, { action: "begin-revision" })).session)); }}>{session.revisionToken ? "Continue revision" : "Revise instruction"}</Button>}
               {!terminal && <Button variant="danger" disabled={busy} onClick={() => { if (window.confirm("Cancel collaboration? Completed work stays in history.")) void perform(async () => update((await api.collaborationAction(room.id, session.id, { action: "cancel" })).session)); }}>Cancel session</Button>}
             </div>
-            {session.status === "awaiting_next" && <p className="text-xs text-mute">Paused at a safe stage boundary. Prepare and explicitly start the next stage when ready.</p>}
+            {session.autoAdvance && !terminal && <p className="text-xs text-mute">Automatic progression enabled. The server prepares and starts subsequent stages (up to 30 seconds between stages). Requests still require explicit approval. Pause stops future stages; Interrupt stops current work.</p>}
+            {session.autoError && <p role="alert" className="text-xs text-danger">{session.autoError}</p>}
+            {session.revisionToken && <p className="text-xs text-mute">Instruction revision is reserved on the server. Automatic progression is suspended until this approved plan is saved or discarded.</p>}
+            {session.status === "awaiting_next" && !session.autoAdvance && !session.revisionToken && <p className="text-xs text-mute">Paused at a safe stage boundary. Prepare and explicitly start the next stage when ready.</p>}
             {session.status === "interrupted" && <p className="text-xs text-mute">Active execution was cancelled. Only never-started tasks with safe prerequisites can be resumed; otherwise revise the instruction.</p>}
           </div>
           <div className="space-y-3 rounded-xl border border-line p-4">

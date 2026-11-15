@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { migrateExecutionSchema } from "../src/lib/server/execution-schema.ts";
 import { migrateCollaborationSchema } from "../src/lib/server/collaboration-schema.ts";
 import { approveExecutionTask, cancelExecutionRun, deterministicMockExecutor, getExecutionRun, rejectExecutionTask, startExecutionRun } from "../src/lib/server/execution-engine.ts";
-import { advanceSession, assertParticipants, closeSession, continueSession, createSession, getSession, listSessions, requestTasks, resumeSession } from "../src/lib/server/collaboration-store.ts";
+import { advanceSession, advanceAutomatically, assertAutomaticParticipants, automaticSessionIds, beginRevision, discardRevision, setAutomaticAdvance, assertParticipants, closeSession, continueSession, createSession, getSession, listSessions, requestTasks, resumeSession } from "../src/lib/server/collaboration-store.ts";
 import { collaborationContext, readRequests, validRequest } from "../src/lib/server/collaboration-protocol.ts";
 import { buildExecutionPrompt, createMastraTaskExecutor } from "../src/lib/server/execution-task-executor.ts";
 
@@ -173,7 +173,8 @@ test("file-backed session survives reopening and revised work receives completed
     session = await getSession(second, session.id);
     assert.equal(session.status, "awaiting_next");
     const revised = { ...draft, instruction: "Add a limitation section" };
-    session = await continueSession(second, session, revised, members);
+    session = await beginRevision(second, session);
+    session = await continueSession(second, session, revised, members, session.revisionToken);
     assert.equal(session.rounds[0].run.status, "completed");
     assert.ok(latest(session).tasks.every((t) => ids.every((id) => collaborationContext(t.input).prior.some((p) => p.taskId === id))));
     assert.ok(latest(session).tasks.every((t) => !collaborationContext(t.input).allowRequests));
@@ -242,11 +243,14 @@ test("round budget leaves room for review and final instead of allowing endless 
   const complete = async () => { await settle(client, latest(s).id); s = await getSession(client, s.id); };
   await complete();
   for (let i = 0; i < 5; i++) {
-    s = await continueSession(client, s, { ...draft, instruction: `Additional work ${i}` }, members);
+    s = await beginRevision(client, s);
+    s = await continueSession(client, s, { ...draft, instruction: `Additional work ${i}` }, members, s.revisionToken);
     await complete();
   }
   assert.equal(s.rounds.length, 6);
-  await assert.rejects(continueSession(client, s, draft, members), /budget/i);
+  s = await beginRevision(client, s);
+  await assert.rejects(continueSession(client, s, draft, members, s.revisionToken), /budget/i);
+  s = await discardRevision(client, s, s.revisionToken);
   s = await advanceSession(client, s, members);
   await complete();
   s = await advanceSession(client, s, members);
@@ -256,4 +260,123 @@ test("round budget leaves room for review and final instead of allowing endless 
   const finalInput = latest(s).tasks[0].input.originalInstruction;
   assert.match(finalInput, /Research alternatives and compare them/);
   assert.match(finalInput, /Additional work 4/);
+});
+
+
+test("automatic progression is explicit, durable, bounded and never approves agent requests", async (t) => {
+  const client = await setup(t);
+  let session = await createSession(client, "room-auto", draft, members);
+  const start = (id) => startExecutionRun(client, id, deterministicMockExecutor);
+  assert.equal(session.autoAdvance, false);
+  assert.equal((await automaticSessionIds(client)).length, 0);
+  await advanceAutomatically(client, session, members, start);
+  assert.equal((await getSession(client, session.id)).status, "pending");
+  await setAutomaticAdvance(client, session.id, true);
+  session = await getSession(client, session.id);
+  assert.equal(session.autoAdvance, true);
+  assert.deepEqual(await automaticSessionIds(client), [{ id: session.id, roomId: "room-auto" }]);
+  session = await advanceAutomatically(client, session, members, start);
+  await settle(client, latest(session).id, deterministicMockExecutor, false);
+  session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  assert.equal(session.rounds.at(-1).phase, "requests");
+  const blocked = await settle(client, latest(session).id, deterministicMockExecutor, false);
+  assert.equal(blocked.status, "blocked");
+  assert.ok(blocked.tasks.every((task) => task.requiresApproval && task.attempts === 0));
+  await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  assert.equal((await getSession(client, session.id)).rounds.length, 2);
+  assert.equal((await automaticSessionIds(client)).length, 0);
+  for (const task of blocked.tasks) await approveExecutionTask(client, blocked.id, task.id, deterministicMockExecutor);
+  await settle(client, blocked.id, deterministicMockExecutor, false);
+  await setAutomaticAdvance(client, session.id, false);
+  session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  assert.equal(session.rounds.length, 2, "pause prevents future stages");
+  await setAutomaticAdvance(client, session.id, true);
+  for (const phase of ["review", "final"]) {
+    session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+    assert.equal(session.rounds.at(-1).phase, phase);
+    await settle(client, latest(session).id, deterministicMockExecutor, false);
+  }
+  session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  assert.equal(session.status, "completed");
+  assert.equal(session.autoAdvance, false);
+  assert.equal(session.rounds.length, 4);
+  assert.ok(session.finalDeliverable);
+});
+
+test("opening a revision durably pauses stale automatic scheduling and consumes its lease exactly once", async (t) => {
+  const client = await setup(t);
+  let session = await createSession(client, "room-revision", draft, members);
+  const quiet = { retrySafety: "never", execute: async () => ({ text: "Completed evidence." }) };
+  await settle(client, latest(session).id, quiet);
+  session = await getSession(client, session.id);
+  await setAutomaticAdvance(client, session.id, true);
+  let staleAutomaticSnapshot = await getSession(client, session.id);
+  await setAutomaticAdvance(client, session.id, false);
+  const afterPause = await advanceAutomatically(client, staleAutomaticSnapshot, members, async () => undefined);
+  assert.equal(afterPause.rounds.length, 1, "a confirmed pause defeats a scheduler snapshot that was read earlier");
+  await setAutomaticAdvance(client, session.id, true);
+  staleAutomaticSnapshot = await getSession(client, session.id);
+
+  session = await beginRevision(client, staleAutomaticSnapshot);
+  const token = session.revisionToken;
+  assert.ok(token);
+  assert.equal(session.autoAdvance, false);
+  assert.deepEqual(await automaticSessionIds(client), []);
+  const afterStaleTick = await advanceAutomatically(client, staleAutomaticSnapshot, members, async (id) => startExecutionRun(client, id, quiet));
+  assert.equal(afterStaleTick.rounds.length, 1, "a scheduler snapshot from before the pause cannot append a stage");
+
+  const revised = { ...draft, instruction: "Add a limitations section based on the completed evidence." };
+  session = await continueSession(client, session, revised, members, token);
+  assert.equal(session.rounds.length, 2);
+  assert.equal(session.revisionToken, null);
+  assert.equal(session.autoAdvance, false);
+  assert.ok(latest(session).tasks.every((task) => task.input.originalInstruction === revised.instruction));
+  assert.ok(latest(session).tasks.every((task) => collaborationContext(task.input).prior.some((prior) => prior.text === "Completed evidence.")));
+  await assert.rejects(continueSession(client, session, revised, members, token), /no longer current|already saved/i);
+  assert.equal((await getSession(client, session.id)).rounds.length, 2, "a stale revision submission cannot create a duplicate stage");
+});
+
+test("concurrent automatic ticks coalesce before they can create a duplicate stage", async (t) => {
+  const client = await setup(t);
+  let session = await createSession(client, "room-auto-race", draft, members);
+  const quiet = { retrySafety: "never", execute: async () => ({ text: "Completed evidence." }) };
+  await settle(client, latest(session).id, quiet);
+  session = await getSession(client, session.id);
+  await setAutomaticAdvance(client, session.id, true);
+  const snapshot = await getSession(client, session.id);
+  const results = await Promise.all(Array.from({ length: 4 }, () => advanceAutomatically(client, snapshot, members, async () => undefined)));
+  assert.ok(results.every((result) => result.rounds.length === 2));
+  const stored = await getSession(client, session.id);
+  assert.equal(stored.rounds.length, 2);
+  assert.equal(stored.rounds.at(-1).phase, "review");
+});
+
+test("rejected automatic requests stop progression without executing the rejected tasks", async (t) => {
+  const client = await setup(t);
+  let session = await createSession(client, "room-auto-reject", draft, members);
+  const start = (id) => startExecutionRun(client, id, deterministicMockExecutor);
+  await setAutomaticAdvance(client, session.id, true);
+  session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  await settle(client, latest(session).id, deterministicMockExecutor, false);
+  session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  const blocked = await settle(client, latest(session).id, deterministicMockExecutor, false);
+  for (const task of blocked.tasks) await rejectExecutionTask(client, blocked.id, task.id, deterministicMockExecutor);
+  await settle(client, blocked.id, deterministicMockExecutor, false);
+  session = await advanceAutomatically(client, await getSession(client, session.id), members, start);
+  assert.equal(session.status, "failed");
+  assert.equal(session.autoAdvance, false);
+  assert.equal(session.rounds.length, 2);
+  assert.ok(latest(session).tasks.every((task) => task.attempts === 0 && task.output === null));
+});
+
+test("automatic live participation rejects hosted or external-tool agents and stores longer single-worker deadlines", async (t) => {
+  const client = await setup(t);
+  assert.throws(() => assertAutomaticParticipants("live", members), /local-only Ollama/);
+  const local = members.map((b) => ({ ...b, modelConfig: { providerId: "ollama", primaryModel: "qwen3:4b-instruct", routingMode: "fixed", localOnly: true } }));
+  assert.doesNotThrow(() => assertAutomaticParticipants("live", local));
+  assert.throws(() => assertAutomaticParticipants("live", [{ ...local[0], tools: { ...local[0].tools, webSearch: true } }, local[1]]), /external connections disabled/);
+  assert.throws(() => assertAutomaticParticipants("live", [{ ...local[0], modelConfig: { ...local[0].modelConfig, fallbackModels: [{ providerId: "nebius", model: "hosted" }] } }, local[1]]), /local-only Ollama/);
+  const session = await createSession(client, "room-live-auto", { ...draft, mode: "live", plan: { ...draft.plan, planningMode: "live" } }, local);
+  assert.equal(latest(session).concurrencyLimit, 1);
+  assert.ok(latest(session).tasks.every((task) => task.timeoutMs === 300_000));
 });
