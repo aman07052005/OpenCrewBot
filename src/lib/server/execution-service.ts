@@ -15,6 +15,9 @@ import {
 } from "./chief-of-staff";
 import { createLiveChiefOfStaffPlanGenerator } from "./chief-of-staff-model";
 import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
+import { authorizeAction } from "./approval-service.ts";
+import { EXECUTION_EXTERNAL_OPERATIONS, prepareExecutionActions, synchronizeExecutionAction } from "./execution-actions.ts";
+import type { ActionRequest } from "@/lib/shared/types";
 
 function engineError(error: unknown): never {
   throw new InputError(error instanceof Error ? error.message : "Invalid execution request.");
@@ -31,11 +34,34 @@ export async function createRun(input: CreateExecutionRunInput) {
       if (!bots.find((bot) => bot.id === task.agentId)?.agentConfig?.skillIds.includes(task.skillId)) throw new InputError(`Task ${task.key} assigns a skill disabled for its agent.`);
       task.input = { ...(task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : {}), skillId: task.skillId, skillInput: task.skillInput };
     }
+    if (task.externalAction) {
+      if (task.skillId) throw new InputError(`Task ${task.key} cannot combine a skill and an external operation.`);
+      if (executionMode !== "live") throw new InputError(`Task ${task.key} uses a real integration and requires LIVE execution mode.`);
+      if (!EXECUTION_EXTERNAL_OPERATIONS.has(task.externalAction.operation)) throw new InputError(`Task ${task.key} refers to an unsupported execution operation.`);
+      const assigned = bots.find((bot) => bot.id === task.agentId)!;
+      const authorization = authorizeAction(assigned, task.externalAction.operation, task.externalAction.arguments);
+      if (authorization.decision === "denied") throw new InputError(`Task ${task.key}: ${authorization.reason}`);
+      task.input = { ...(task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : {}), externalAction: task.externalAction };
+    }
   }
   try {
-    return await createExecutionRun(await db(), { ...input, executionMode });
+    const client = await db();
+    const run = await createExecutionRun(client, { ...input, executionMode });
+    await prepareExecutionActions(client, run, bots);
+    return (await getExecutionRun(client, run.id))!;
   } catch (error) {
     return engineError(error);
+  }
+}
+
+export async function synchronizeActionExecution(action: ActionRequest): Promise<void> {
+  const client = await db();
+  const link = await synchronizeExecutionAction(client, action);
+  if (!link?.shouldResume) return;
+  const run = await getExecutionRun(client, link.runId);
+  if (run && run.status === "blocked") {
+    requireLiveKey(run.executionMode);
+    await startExecutionRun(client, run.id, executionTaskExecutor(run.executionMode));
   }
 }
 

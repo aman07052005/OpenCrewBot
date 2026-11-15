@@ -3,13 +3,18 @@ import { z } from "zod";
 import type { Client } from "@libsql/client";
 import { GMAIL_ACCOUNT_ID, GMAIL_SUBJECT } from "./gmail-integration.ts";
 import type { GmailReadArgs } from "./gmail-integration.ts";
+import { GitHubRequestSchema, type GitHubRequest } from "./github-integration.ts";
 import type { ActionRequest, ApprovalMode, Bot, PermissionPolicy } from "@/lib/shared/types";
 
 const SimulatedEmailSchema = z.object({ destination: z.string().email().max(320), subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(20_000) }).strict();
 const GmailReadSchema = z.object({ accountId: z.string().regex(GMAIL_ACCOUNT_ID), subject: z.string().regex(GMAIL_SUBJECT) }).strict();
+export const McpReadArgsSchema = z.object({ serverId: z.string().regex(/^[A-Za-z0-9-]{1,160}$/), tool: z.string().regex(/^[A-Za-z0-9_.-]{1,160}$/), input: z.unknown() }).strict().refine((value) => JSON.stringify(value.input ?? null).length <= 10_000, "MCP input exceeds 10 KB.");
+export type McpReadArgs = z.infer<typeof McpReadArgsSchema>;
 export const ACTION_OPERATIONS = {
   "simulated.email.send": { tool: "simulated-email", classification: "external-write", schema: SimulatedEmailSchema, simulated: true },
   "gmail.demo.read": { tool: "gmail", classification: "external-read", schema: GmailReadSchema, simulated: false },
+  "github.public.read": { tool: "github", classification: "external-read", schema: GitHubRequestSchema, simulated: false },
+  "mcp.read.invoke": { tool: "mcp", classification: "external-read", schema: McpReadArgsSchema, simulated: false },
 } as const;
 export type ActionOperation = keyof typeof ACTION_OPERATIONS;
 export const defaultPermissionPolicy = (): PermissionPolicy => ({ preapprovedOperations: [], allowedDestinations: [], maxActionsPerDay: 20 });
@@ -32,9 +37,11 @@ export function authorizeAction(bot: Bot, operation: string, args: unknown): Dec
     if (!bot.connections.includes("composio:gmail")) return { decision: "denied", reason: "Gmail is not assigned to this agent." };
     return { decision: "approval-required", reason: "Reading the designated test message always requires explicit owner approval." };
   }
+  if (operation === "github.public.read" && !bot.tools.webSearch && !bot.connections.includes("composio:github")) return { decision: "denied", reason: "GitHub read access is not assigned to this agent." };
+  if (operation === "mcp.read.invoke" && !bot.connections.includes(`mcp:${(parsed.data as McpReadArgs).serverId}`)) return { decision: "denied", reason: "The requested MCP server is not assigned to this agent." };
   const policy = bot.permissionPolicy ?? defaultPermissionPolicy();
-  if (bot.approval === "ask") return { decision: "approval-required", reason: "Ask First requires approval for external writes." };
-  if (bot.approval === "full") return { decision: "allowed", reason: "Full Access allows this supported, scoped simulated operation." };
+  if (bot.approval === "ask") return { decision: "approval-required", reason: "Ask First requires approval for this registered external operation." };
+  if (bot.approval === "full") return { decision: "allowed", reason: "Full Access allows this registered operation within its server-enforced scope." };
   const allowedOperation = policy.preapprovedOperations.includes(operation);
   const host = destination(parsed.data as Record<string, unknown>);
   const allowedDestination = !policy.allowedDestinations.length || (host !== undefined && policy.allowedDestinations.includes(host));
@@ -44,9 +51,11 @@ function row(value: Record<string, unknown>): ActionRequest {
   return { id: String(value.id), agentId: String(value.agent_id), conversationId: value.conversation_id == null ? null : String(value.conversation_id), executionRunId: value.execution_run_id == null ? null : String(value.execution_run_id), executionTaskId: value.execution_task_id == null ? null : String(value.execution_task_id), tool: String(value.tool), operation: String(value.operation), arguments: JSON.parse(String(value.arguments_json)), preview: String(value.preview), permissionLevel: String(value.permission_level) as ApprovalMode, decision: String(value.decision) as ActionRequest["decision"], reason: String(value.reason), status: String(value.status) as ActionRequest["status"], createdAt: String(value.created_at), expiresAt: value.expires_at == null ? null : String(value.expires_at), decidedAt: value.decided_at == null ? null : String(value.decided_at), result: value.result_json == null ? null : JSON.parse(String(value.result_json)), error: value.error == null ? null : String(value.error), simulated: Number(value.simulated) === 1, invocationCount: Number(value.invocation_count ?? 0) };
 }
 async function audit(client: Client, actionId: string, event: string, reason: string) { await client.execute({ sql: "INSERT INTO action_audit_log (id,action_id,event,reason,created_at) VALUES (?,?,?,?,?)", args: [randomUUID(), actionId, event, reason, new Date().toISOString()] }); }
-function preview(operation: ActionOperation, args: z.infer<typeof SimulatedEmailSchema> | GmailReadArgs) {
+function preview(operation: ActionOperation, args: z.infer<typeof SimulatedEmailSchema> | GmailReadArgs | GitHubRequest | McpReadArgs) {
   if (operation === "gmail.demo.read" && "accountId" in args) return `LIVE GMAIL READ — connection: ${args.accountId}; exact subject: ${args.subject}. Retrieve one synthetic inbox message only. No email is sent or modified.`;
   if ("destination" in args) return `SIMULATED EMAIL — destination: ${args.destination}; subject: ${args.subject}; body: ${args.body.slice(0, 500)}. No email has been sent.`;
+  if (operation === "github.public.read" && "repository" in args) return `LIVE GITHUB PUBLIC READ — ${args.operation} from ${args.repository}${"path" in args ? `; path: ${args.path}` : "number" in args ? `; number: ${args.number}` : ""}. Public REST only; no repository write or private credential.`;
+  if (operation === "mcp.read.invoke" && "serverId" in args) return `LIVE MCP READ — server: ${args.serverId}; owner-enabled tool: ${args.tool}; input: ${JSON.stringify(scrub(args.input)).slice(0, 500)}. Live read-only annotation and bot connection are rechecked before invocation.`;
   throw new Error("Invalid action preview.");
 }
 export async function proposeAction(client: Client, bot: Bot, input: { operation: string; arguments: unknown; conversationId?: string; executionRunId?: string; executionTaskId?: string }): Promise<ActionRequest> {
@@ -68,31 +77,54 @@ export async function proposeAction(client: Client, bot: Bot, input: { operation
   return getAction(client, id) as Promise<ActionRequest>;
 }
 export async function getAction(client: Client, id: string): Promise<ActionRequest | null> { const result = await client.execute({ sql: "SELECT * FROM action_requests WHERE id=?", args: [id] }); return result.rows[0] ? row(result.rows[0] as Record<string, unknown>) : null; }
+export async function getExecutionTaskAction(client: Client, taskId: string): Promise<ActionRequest | null> { const result = await client.execute({ sql: "SELECT * FROM action_requests WHERE execution_task_id=?", args: [taskId] }); return result.rows[0] ? row(result.rows[0] as Record<string, unknown>) : null; }
 export async function listActions(client: Client, status?: string): Promise<ActionRequest[]> { await expireActions(client); const result = await client.execute(status ? { sql: "SELECT * FROM action_requests WHERE status=? ORDER BY created_at DESC LIMIT 200", args: [status] } : "SELECT * FROM action_requests ORDER BY created_at DESC LIMIT 200"); return Promise.all(result.rows.map(async (item) => { const action = row(item as Record<string, unknown>); return { ...action, audit: await actionAudit(client, action.id) }; })); }
 async function expireActions(client: Client) { const now = new Date().toISOString(); const expired = await client.execute({ sql: "UPDATE action_requests SET status='expired',decided_at=? WHERE status='pending' AND expires_at IS NOT NULL AND expires_at<? RETURNING id", args: [now, now] }); for (const item of expired.rows) await audit(client, String(item.id), "expired", "Approval expired before a decision."); }
 export async function decideAction(client: Client, id: string, decision: "approve" | "reject" | "cancel"): Promise<ActionRequest | null> { await expireActions(client); const next = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "cancelled"; const reason = decision === "approve" ? "Approved by owner." : decision === "reject" ? "Rejected by owner." : "Cancelled by owner."; const updated = await client.execute({ sql: "UPDATE action_requests SET status=?,decided_at=? WHERE id=? AND status='pending'", args: [next, new Date().toISOString(), id] }); if (!updated.rowsAffected) return null; await audit(client, id, next, reason); return getAction(client, id); }
 const g = globalThis as unknown as { __simulatedActionInvocations?: number };
 export function simulatedInvocationCount() { return g.__simulatedActionInvocations ?? 0; }
-export async function executeApprovedAction(client: Client, id: string, bot: Bot, handlers?: { gmailRead: (args: GmailReadArgs) => Promise<unknown> }): Promise<ActionRequest | null> {
+export interface ActionHandlers { gmailRead?: (args: GmailReadArgs) => Promise<unknown>; githubRead?: (args: GitHubRequest) => Promise<unknown>; mcpRead?: (args: McpReadArgs) => Promise<unknown>; }
+export async function executeApprovedAction(client: Client, id: string, bot: Bot, handlers?: ActionHandlers): Promise<ActionRequest | null> {
   await expireActions(client); const action = await getAction(client, id); if (!action) return null;
   if (action.status !== "approved") return action;
   const current = authorizeAction(bot, action.operation, action.arguments);
   const gmail = action.operation === "gmail.demo.read";
   const parsedGmail = gmail ? GmailReadSchema.safeParse(action.arguments) : null;
+  const github = action.operation === "github.public.read";
+  const parsedGithub = github ? GitHubRequestSchema.safeParse(action.arguments) : null;
+  const mcp = action.operation === "mcp.read.invoke";
+  const parsedMcp = mcp ? McpReadArgsSchema.safeParse(action.arguments) : null;
   const invalidGmail = gmail && (!parsedGmail?.success || action.decision !== "approval-required" || !action.decidedAt || !action.expiresAt || action.expiresAt <= new Date().toISOString() || action.preview !== preview("gmail.demo.read", parsedGmail.data));
-  const revoked = bot.id !== action.agentId || invalidGmail || current.decision === "denied" || (action.decision === "allowed" && current.decision !== "allowed");
+  const parsedExternal = parsedGithub?.success ? parsedGithub.data : parsedMcp?.success ? parsedMcp.data : null;
+  const invalidExternal = (github || mcp) && (!parsedExternal || action.preview !== preview(action.operation as ActionOperation, parsedExternal));
+  const revoked = bot.id !== action.agentId || invalidGmail || invalidExternal || current.decision === "denied" || (action.decision === "allowed" && current.decision !== "allowed");
   if (revoked) { await client.execute({ sql: "UPDATE action_requests SET status='failed',error=?,decided_at=? WHERE id=? AND status='approved'", args: ["Permission was revoked or scope no longer matches before execution.", new Date().toISOString(), id] }); await audit(client, id, "failed", "Permission was revoked or scope no longer matches before execution."); return getAction(client, id); }
   const claimed = await client.execute({ sql: "UPDATE action_requests SET status='executing' WHERE id=? AND status='approved'", args: [id] }); if (!claimed.rowsAffected) return getAction(client, id);
-  await audit(client, id, "executing", gmail ? "Claimed once for approved Gmail read." : "Claimed exactly once for simulated execution.");
+  await audit(client, id, "executing", gmail ? "Claimed once for approved Gmail read." : github ? "Claimed once for bounded public GitHub read." : mcp ? "Claimed once for owner-enabled read-only MCP invocation." : "Claimed exactly once for simulated execution.");
   if (gmail) {
     try {
-      if (!handlers || !parsedGmail?.success) throw new Error("Gmail adapter is not configured.");
+      if (!handlers?.gmailRead || !parsedGmail?.success) throw new Error("Gmail adapter is not configured.");
       await client.execute({ sql: "UPDATE action_requests SET invocation_count=invocation_count+1 WHERE id=? AND status='executing'", args: [id] });
       const result = await handlers.gmailRead(parsedGmail.data);
       await client.execute({ sql: "UPDATE action_requests SET status='succeeded',result_json=? WHERE id=? AND status='executing'", args: [JSON.stringify(result), id] });
       await audit(client, id, "succeeded", "Approved synthetic Gmail message retrieved; no mail sent or modified.");
     } catch {
       const message = "Gmail read failed or authorization changed. Check the test mailbox, scope and exact synthetic message. No automatic retry.";
+      await client.execute({ sql: "UPDATE action_requests SET status='failed',error=? WHERE id=? AND status='executing'", args: [message, id] });
+      await audit(client, id, "failed", message);
+    }
+    return getAction(client, id);
+  }
+  if (github || mcp) {
+    try {
+      const invoke = github && parsedGithub?.success && handlers?.githubRead ? () => handlers.githubRead!(parsedGithub.data) : mcp && parsedMcp?.success && handlers?.mcpRead ? () => handlers.mcpRead!(parsedMcp.data) : null;
+      if (!invoke) throw new Error("Integration adapter is not configured.");
+      await client.execute({ sql: "UPDATE action_requests SET invocation_count=invocation_count+1 WHERE id=? AND status='executing'", args: [id] });
+      const result = await invoke();
+      await client.execute({ sql: "UPDATE action_requests SET status='succeeded',result_json=? WHERE id=? AND status='executing'", args: [JSON.stringify(result), id] });
+      await audit(client, id, "succeeded", github ? "Bounded public GitHub read completed." : "Owner-enabled read-only MCP invocation completed.");
+    } catch {
+      const message = github ? "GitHub read failed. No mock result was substituted and no automatic retry will occur." : "MCP read failed or its connection/read-only scope changed. No mock result was substituted and no automatic retry will occur.";
       await client.execute({ sql: "UPDATE action_requests SET status='failed',error=? WHERE id=? AND status='executing'", args: [message, id] });
       await audit(client, id, "failed", message);
     }

@@ -4,6 +4,8 @@ export type ApprovalMode = "ask" | "controlled" | "full";
 
 export type ActionStatus = "pending" | "approved" | "rejected" | "executing" | "succeeded" | "failed" | "cancelled" | "expired";
 export interface PermissionPolicy { preapprovedOperations: string[]; allowedDestinations: string[]; maxActionsPerDay: number; }
+export type ExecutionActionOperation = "github.public.read" | "mcp.read.invoke";
+export interface ExecutionExternalAction { operation: ExecutionActionOperation; arguments: unknown; }
 export interface ActionRequest {
   id: string; agentId: string; conversationId: string | null; executionRunId: string | null; executionTaskId: string | null;
   tool: string; operation: string; arguments: unknown; preview: string; permissionLevel: ApprovalMode;
@@ -205,6 +207,8 @@ export interface ExecutionTaskInput {
   timeoutMs?: number;
   skillId?: string;
   skillInput?: unknown;
+  /** Explicit registered operation; never inferred from free-form task text at execution time. */
+  externalAction?: ExecutionExternalAction;
 }
 
 export interface CreateExecutionRunInput {

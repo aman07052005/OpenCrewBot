@@ -18,7 +18,7 @@ GitHub and MCP calls validate agent identity and their exact operation inputs be
 - MCP requires an explicitly configured server and an agent explicitly connected to that server. A tool must be both owner-enabled and currently advertised by the server with `readOnlyHint: true`; this condition is rechecked on every direct invocation and while building chat tools.
 - MCP server output and provider errors are bounded and redacted before they reach the UI, model context, or saved status.
 - Chat sessions no longer receive raw MCP tools simply because a server is connected. They receive only the same owner-enabled, currently read-only allow-list. Composio actions retain Mastra's provider-managed human prompt, including at Full Access, until a supported action is migrated to Module G's persistent lifecycle.
-- Execution tasks intentionally do not receive Composio or MCP tools. MOCK execution never contacts an integration, and a LIVE failure never becomes a mock success.
+- Execution model sessions still do not receive Composio or raw MCP tools. A LIVE execution task may instead name one registered `github.public.read` or `mcp.read.invoke` operation with validated JSON. Module G authorizes and claims it exactly once; MOCK execution never contacts an integration, and a LIVE failure never becomes a mock success.
 
 Module G still owns the only registered external-write adapter (`simulated.email.send`). Its per-action `invocationCount` is the durable value shown in Approvals Manager; the simulated adapter's process-wide sequence is now named `adapterInvocationSequence` so it cannot be confused with that action's count.
 

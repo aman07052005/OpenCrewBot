@@ -28,4 +28,6 @@ export async function migrateApprovalSchema(client: Client): Promise<void> {
       { sql: "INSERT INTO schema_migrations (version, applied_at) VALUES (5, ?) ON CONFLICT(version) DO NOTHING", args: [new Date().toISOString()] },
     ], "write");
   }
+  // One durable action record per execution task is the idempotency boundary.
+  await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS action_requests_by_execution_task ON action_requests(execution_task_id) WHERE execution_task_id IS NOT NULL");
 }

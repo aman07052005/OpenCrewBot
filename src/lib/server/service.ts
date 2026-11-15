@@ -132,7 +132,8 @@ function validateBot(input: Partial<BotInput>) {
   }
   if (input.permissionPolicy !== undefined) {
     const policy = input.permissionPolicy;
-    if (!Array.isArray(policy.preapprovedOperations) || !policy.preapprovedOperations.every((item) => item === "simulated.email.send") || !Array.isArray(policy.allowedDestinations) || !policy.allowedDestinations.every((item) => /^[a-z0-9.-]+$/i.test(item)) || !Number.isInteger(policy.maxActionsPerDay) || policy.maxActionsPerDay < 0 || policy.maxActionsPerDay > 1000) throw new InputError("Permission policy must contain supported operations, safe destination domains, and a daily limit from 0 to 1000.");
+    const operations = new Set(["simulated.email.send", "github.public.read", "mcp.read.invoke"]);
+    if (!Array.isArray(policy.preapprovedOperations) || !policy.preapprovedOperations.every((item) => operations.has(item)) || !Array.isArray(policy.allowedDestinations) || !policy.allowedDestinations.every((item) => /^[a-z0-9.-]+$/i.test(item)) || !Number.isInteger(policy.maxActionsPerDay) || policy.maxActionsPerDay < 0 || policy.maxActionsPerDay > 1000) throw new InputError("Permission policy must contain supported operations, safe destination domains, and a daily limit from 0 to 1000.");
   }
   if (input.agentConfig !== undefined) {
     const agentConfig = AgentFactoryMetadataSchema.safeParse(input.agentConfig);

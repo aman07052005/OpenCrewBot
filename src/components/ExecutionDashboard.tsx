@@ -8,6 +8,7 @@ import { executionOutputKind, executionProgress } from "@/lib/client/execution-d
 import type { Bot, ChiefOfStaffPlan, ChiefOfStaffTask, CreateChiefOfStaffRunInput, CreateExecutionRunInput, ExecutionMode, ExecutionRun, ExecutionRunStatus, ExecutionTask, ExecutionTaskInput } from "@/lib/shared/types";
 import { useApp } from "./OpenCrewBotApp";
 import { Button, Drawer, Field, inputClass, Segmented, Toggle } from "./ui";
+import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
 
 const PAGE_SIZE = 100;
 const POLL_MS = 2_000;
@@ -390,9 +391,11 @@ function JsonSection({ title, value }: { title: string; value: unknown }) {
   return <details className="mt-3 rounded-xl bg-[#151515] ring-1 ring-line"><summary className="cursor-pointer px-3 py-2.5 text-[11px] font-semibold text-mute">{title}</summary><pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words border-t border-line px-3 py-3 text-[11px] leading-relaxed text-faint">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre></details>;
 }
 
-interface DraftTask extends ExecutionTaskInput {
+interface DraftTask extends Omit<ExecutionTaskInput, "input"> {
   input: string;
   dependsOn: string[];
+  kind: "agent" | "skill" | "github" | "mcp";
+  selectedSkill?: string;
 }
 
 function newTaskKey() {
@@ -403,12 +406,12 @@ function CreateRunDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose: ()
   const [name, setName] = useState("");
   const [mode, setMode] = useState<ExecutionMode>("mock");
   const [concurrency, setConcurrency] = useState("3");
-  const [tasks, setTasks] = useState<DraftTask[]>(() => [{ key: newTaskKey(), title: "", agentId: "", input: "", dependsOn: [], requiresApproval: false }]);
+  const [tasks, setTasks] = useState<DraftTask[]>(() => [{ key: newTaskKey(), title: "", agentId: "", input: "", dependsOn: [], requiresApproval: false, kind: "agent" }]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const updateTask = (index: number, patch: Partial<DraftTask>) => setTasks((current) => current.map((task, i) => i === index ? { ...task, ...patch } : task));
-  const addTask = () => setTasks((current) => [...current, { key: newTaskKey(), title: "", agentId: bots[0]?.id ?? "", input: "", dependsOn: [], requiresApproval: false }]);
+  const addTask = () => setTasks((current) => [...current, { key: newTaskKey(), title: "", agentId: bots[0]?.id ?? "", input: "", dependsOn: [], requiresApproval: false, kind: "agent" }]);
   const removeTask = (index: number) => setTasks((current) => {
     const removedKey = current[index]?.key;
     return current.filter((_, i) => i !== index).map((task) => ({ ...task, dependsOn: task.dependsOn.filter((key) => key !== removedKey) }));
@@ -421,11 +424,22 @@ function CreateRunDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose: ()
     if (!name.trim()) return setError("Give this run a name.");
     if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1 || concurrencyLimit > 32) return setError("Concurrency must be between 1 and 32.");
     if (!bots.length) return setError("Create an agent before assigning execution tasks.");
-    const invalid = tasks.findIndex((task) => !task.title.trim() || !task.input.trim() || !task.agentId);
+    const invalid = tasks.findIndex((task) => !task.title.trim() || !task.input.trim() || !task.agentId || (task.kind === "skill" && !task.selectedSkill));
     if (invalid >= 0) return setError(`Complete the title, assigned agent, and task instructions for task ${invalid + 1}.`);
+    if (tasks.some((task) => (task.kind === "github" || task.kind === "mcp") && mode !== "live")) return setError("Real GitHub and MCP operations require LIVE execution mode.");
+    let prepared: ExecutionTaskInput[];
+    try {
+      prepared = tasks.map(({ key, title, agentId, input: raw, dependsOn, requiresApproval, kind, selectedSkill }) => {
+        const common = { key, title: title.trim(), agentId, dependsOn, requiresApproval };
+        if (kind === "agent") return { ...common, input: raw.trim() };
+        const parsed = JSON.parse(raw) as unknown;
+        if (kind === "skill") return { ...common, skillId: selectedSkill, skillInput: parsed };
+        return { ...common, externalAction: { operation: kind === "github" ? "github.public.read" as const : "mcp.read.invoke" as const, arguments: parsed } };
+      });
+    } catch { return setError("Skill and integration inputs must be valid JSON objects."); }
     const input: CreateExecutionRunInput = {
       name: name.trim(), executionMode: mode, concurrencyLimit,
-      tasks: tasks.map(({ key, title, agentId, input: instructions, dependsOn, requiresApproval }) => ({ key, title: title.trim(), agentId, input: instructions.trim(), dependsOn, requiresApproval })),
+      tasks: prepared,
     };
     setSaving(true);
     try {
@@ -449,7 +463,7 @@ function CreateRunDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose: ()
           { value: "mock", label: "MOCK · SIMULATED", hint: "Deterministic local output; no model call." },
           { value: "live", label: "LIVE MODEL", hint: "Uses the assigned bot's configured model." },
         ]} />
-        {mode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Starting a live run may call a paid model. No external tools are enabled for execution tasks.</p>}
+        {mode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Agent-instruction tasks may call the configured model. Explicit GitHub/MCP task types use only their registered read-only operation and persistent approval policy; raw external tools remain unavailable.</p>}
         <Field label="Maximum concurrent tasks" hint="Between 1 and 32 tasks can run at once."><input className={inputClass} type="number" min={1} max={32} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} /></Field>
         <div className="space-y-3">
           <div className="flex items-center justify-between"><h3 className="text-[13px] font-semibold">Tasks</h3><Button size="sm" onClick={addTask}><Plus size={13} /> Add task</Button></div>
@@ -458,7 +472,9 @@ function CreateRunDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose: ()
               <div className="flex items-center justify-between"><legend className="text-[12px] font-semibold">Task {index + 1}</legend>{tasks.length > 1 && <button type="button" onClick={() => removeTask(index)} className="text-[11px] text-danger hover:underline">Remove</button>}</div>
               <Field label="Task title"><input className={inputClass} value={task.title} onChange={(event) => updateTask(index, { title: event.target.value })} maxLength={300} placeholder="What should this agent do?" /></Field>
               <Field label="Assigned agent"><select className={inputClass} value={task.agentId} onChange={(event) => updateTask(index, { agentId: event.target.value })}><option value="">Choose an existing agent</option>{bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} · {bot.title || bot.model}</option>)}</select></Field>
-              <Field label="Task instructions"><textarea className={clsx(inputClass, "min-h-24 resize-y")} value={task.input} onChange={(event) => updateTask(index, { input: event.target.value })} placeholder="Give the assigned agent its instructions." /></Field>
+              <Field label="Execution type"><select className={inputClass} value={task.kind} onChange={(event) => updateTask(index, { kind: event.target.value as DraftTask["kind"], input: "", selectedSkill: undefined })}><option value="agent">Agent instruction</option><option value="skill">Registered local skill</option><option value="github">GitHub public read</option><option value="mcp">Owner-enabled MCP read</option></select></Field>
+              {task.kind === "skill" && <Field label="Registered skill"><select className={inputClass} value={task.selectedSkill ?? ""} onChange={(event) => updateTask(index, { selectedSkill: event.target.value })}><option value="">Choose an enabled skill</option>{EXECUTABLE_SKILL_IDS.filter((id) => bots.find((bot) => bot.id === task.agentId)?.agentConfig?.skillIds.includes(id)).map((id) => <option key={id} value={id}>{id}</option>)}</select></Field>}
+              <Field label={task.kind === "agent" ? "Task instructions" : "Validated JSON input"} hint={task.kind === "github" ? "Example: {\"operation\":\"metadata\",\"repository\":\"owner/repo\"}" : task.kind === "mcp" ? "Use serverId, tool, and input. Connection and live read-only status are rechecked." : task.kind === "skill" ? "Input must match the selected registered skill schema." : undefined}><textarea className={clsx(inputClass, "min-h-24 resize-y", task.kind !== "agent" && "font-mono")} value={task.input} onChange={(event) => updateTask(index, { input: event.target.value })} placeholder={task.kind === "agent" ? "Give the assigned agent its instructions." : "{}"} /></Field>
               {index > 0 && <div><p className="mb-1.5 text-[12px] font-medium text-mute">Depends on earlier tasks</p><div className="space-y-1">{tasks.slice(0, index).map((candidate) => <label key={candidate.key} className="flex items-center gap-2 text-[12px] text-mute"><input type="checkbox" checked={task.dependsOn.includes(candidate.key)} onChange={(event) => updateTask(index, { dependsOn: event.target.checked ? [...task.dependsOn, candidate.key] : task.dependsOn.filter((key) => key !== candidate.key) })} />{candidate.title.trim() || `Task ${tasks.indexOf(candidate) + 1}`}</label>)}</div></div>}
               <Toggle checked={Boolean(task.requiresApproval)} onChange={(value) => updateTask(index, { requiresApproval: value })} label="Require task approval" hint="The task stays blocked until a person approves it in the run details." />
             </fieldset>

@@ -9,6 +9,7 @@ import type { Bot } from "@/lib/shared/types";
 import { createMastraTaskExecutor } from "./execution-task-executor";
 import { executeSkill } from "./skills.ts";
 import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
+import { executeTaskExternalAction, taskExternalAction } from "./execution-actions.ts";
 
 async function verifiedRoomId(task: ExecutionTask): Promise<string | undefined> {
   if (!collaborationContext(task.input)) return undefined;
@@ -30,6 +31,13 @@ export function executionTaskExecutor(mode: ExecutionMode): TaskExecutor {
     const roomId = await verifiedRoomId(task);
     const input = task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : null;
     const skillId = input?.skillId;
+    const external = taskExternalAction(task);
+    if (external) {
+      if (mode !== "live") throw new Error("Real integration operations require LIVE execution mode.");
+      const bot = await getBot(task.agentId);
+      if (!bot) throw new Error(`Assigned bot ${task.agentId} no longer exists.`);
+      return executeTaskExternalAction(await db(), task, bot);
+    }
     if (typeof skillId === "string") {
       if (!EXECUTABLE_SKILL_IDS.includes(skillId as never)) throw new Error(`Unknown skill ${skillId}.`);
       const bot = await getBot(task.agentId);
