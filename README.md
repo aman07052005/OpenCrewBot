@@ -1,3 +1,11 @@
+## Product Demonstration
+
+[Watch the OpenCrewBot 2.0 Demonstration](https://drive.google.com/file/d/1pb9Zw0F4gk-XodgpDLLWjhxoU3lM1YDy/view?usp=sharing)
+
+The screen-recorded demonstration showcases the autonomous AI workforce, business workflows, live integrations, persistent memory, approval enforcement, scheduled automation and engineering documentation.
+
+---
+
 <div align="center">
 <img src="docs/logo.svg" alt="OpenCrewBot mascot" width="88" />
 
