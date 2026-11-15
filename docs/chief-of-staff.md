@@ -1,5 +1,7 @@
 # Chief of Staff
 
+**Final-version update:** LIVE planning supports owner-configured Ollama, Nebius and hosted OpenAI-compatible providers. The final planner can select validated enabled skills and registered GitHub/MCP reads; the owner reviews editable JSON and approvals remain separate. Dependency projections bound context while retaining originals. Earlier implementation notes below predate these changes. See [final architecture](architecture.md) and [verification](assignment-verification.md).
+
 The Chief of Staff turns a natural-language business instruction into a reviewable task graph for the agents already configured in OpenCrewBot. The feature uses Module D's persistent execution engine; it does not create agents or change their permissions.
 
 ## Architecture

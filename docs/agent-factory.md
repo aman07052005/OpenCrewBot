@@ -1,5 +1,7 @@
 # Agent Factory
 
+**Final-version update:** LIVE structured generation supports owner-configured Ollama as well as hosted providers. Enabled registered skill IDs now authorize executable skill tasks, subject to server validation. Model execution routing is separately editable. Earlier notes below describe the original factory implementation. See [final README](../README.md).
+
 The Agent Factory creates configurable OpenCrewBot agents from a natural-language description. It uses the existing bot record, model catalog, tools, memory files, permissions, and `bots-changed` event. The existing manual bot form remains available from the **New bot** drawer.
 
 ## Architecture

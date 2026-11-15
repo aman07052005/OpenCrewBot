@@ -1,5 +1,7 @@
 # Multi-model intelligence
 
+**Final-version update:** automatic routing can select owner-designated task-category alternates ahead of the primary; local-only routes are not end-to-end privacy isolation. The Models & usage UI includes provider verification. Local Ollama live inference and structured generation were demonstrated; hosted and live fallback remain unverified. See [module J acceptance](module-j-acceptance.md).
+
 Module J adds an owner-controlled model registry, deterministic routing metadata, per-agent model preferences, and a persistent usage ledger. Credentials never leave server environment variables and are never returned by APIs or stored in SQLite.
 
 ## Providers

@@ -1,5 +1,7 @@
 # Permissions and approvals
 
+**Final-version update:** the persistent action registry now includes registered GitHub/MCP reads and dedicated synthetic Gmail reads as well as simulated email. Chief of Staff may select permitted GitHub/MCP reads; owner approval is still checked. Expiry of an unexecuted linked action fails its task and skips dependents; restart reconciliation handles stranded transitions. Earlier registry descriptions below document its initial version. See [final architecture](architecture.md).
+
 Module G adds a server-side, persistent action authorization layer. It is separate from task approval: approving an execution task only allows that task into the scheduler and never approves a tool action. The Skills Manager remains a local deterministic execution path and does not request external-action permission.
 
 Agents have three levels. **Ask First** creates a pending request for supported external writes. **Controlled Access** permits only configured operation IDs and destination scopes, within an owner-configured daily limit; anything outside that scope requests approval. **Full Access** can skip a repeat prompt only for a supported, validated operation. All levels fail closed for unknown operations, invalid input, and prohibited actions. The owner can edit Controlled Access operation IDs, destination domains, and daily limit in the bot form; generated agent instructions cannot change this policy.

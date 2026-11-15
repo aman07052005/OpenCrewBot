@@ -1,5 +1,7 @@
 # Skills and tools
 
+**Final-version update:** `/api/skills` is GET catalogue-only; execute through an authorized persistent task or Skills manager. LIVE Chief of Staff can select enabled registered skills with validated inputs. Deterministic local results are not simulated model outputs, even when invoked from a MOCK-labelled run. See [final README](../README.md).
+
 OpenCrewBot's skill registry is server-owned: each entry has a stable ID, validated input contract, declared permissions/tools, and an executable handler. Users and models can select an ID, but cannot upload JavaScript or define a handler.
 
 The eight executable skills are Market Research, Competitor Analysis, Financial Modelling, Presentation Creation, Email Drafting, Code Review, Data Analysis, and Lead Generation. Market/lead skills only interpret supplied evidence in this release; without evidence they return a labelled research framework or gap. Financial and data analysis are deterministic. Presentation produces a downloadable Markdown outline, not PPTX. Email is a draft only. Code review reads explicit supplied text only. Lead Generation never collects personal contact data or sends outreach.

@@ -1,5 +1,7 @@
 # Module C — Persistent multi-agent collaboration
 
+**Final-version update:** Optional automatic progression is implemented (see the section at the end). Server-side revision reservations now suspend automation and prevent stale/duplicate continuation saves. Manual LIVE completion and MOCK continuation were demonstrated separately. Older statements about exclusively manual stages or future modules refer to the initial implementation. See [final architecture](architecture.md).
+
 ## Scope
 
 Collaboration extends the original room UI. Ordinary chat, existing room routing, individual bot records and Markdown memory remain unchanged. Every collaboration stage is a real persisted Module D execution run. The owner explicitly starts each stage; this version does not automatically schedule the next stage in the background.

@@ -1,5 +1,7 @@
 # Persistent execution engine
 
+**Final-version update:** LIVE execution resolves configured local or hosted models, not just Nebius. Registered skills and GitHub/MCP read operations are available through validated task fields; external approvals remain separate. Large dependency outputs are projected, and full originals retained. Earlier setup text is historical. See [final README](../README.md).
+
 Module D adds a durable task-graph runner alongside the existing Mastra chat runtime. Chat messages, rooms, ordinary Mastra sessions, and their approval handling are unchanged. A run records its `executionMode`: `mock` uses the deterministic local executor, while `live` uses the assigned bot's Mastra agent and Nebius model. The default is `mock`; live execution is never substituted with mock output when a model call fails.
 
 ## Storage

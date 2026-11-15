@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { Client, InStatement } from "@libsql/client";
 import type { CreateExecutionRunInput, CreateScheduledWorkflowInput, ScheduledOccurrenceStatus, ScheduledWorkflow, ScheduledWorkflowOccurrence } from "@/lib/shared/types";
 import { db, listBots } from "./db";
-import { createExecutionRun, getExecutionRun, startExecutionRun, validateExecutionRunInput } from "./execution-engine";
+import { createExecutionRun, getExecutionRun, startExecutionRun } from "./execution-engine";
 import { executionTaskExecutor } from "./execution-adapter";
 import { isMock } from "./config";
 import { InputError } from "./errors";
 import { nextWorkflowRun, validateTimezone, validateWorkflowSchedule } from "./workflow-schedule";
-import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
+import { resolveModelRoutes } from "./model-routing";
+import { validateScheduledWorkflowPlan } from "./scheduled-workflow-plan";
 
 const iso = (now = new Date()) => now.toISOString();
 const text = (value: unknown, label: string, maximum: number, optional = false) => {
@@ -30,18 +31,8 @@ function occurrenceFrom(row: Record<string, unknown>): ScheduledWorkflowOccurren
   return { id: String(row.id), workflowId: String(row.workflow_id), trigger: String(row.trigger) as "automatic" | "manual", scheduledFor: String(row.scheduled_for), status: String(row.status) as ScheduledOccurrenceStatus, runId: row.run_id == null ? null : String(row.run_id), createdAt: String(row.created_at), startedAt: row.started_at == null ? null : String(row.started_at), finishedAt: row.finished_at == null ? null : String(row.finished_at), error: row.error == null ? null : String(row.error) };
 }
 
-async function validatePlan(plan: unknown): Promise<{ plan: CreateExecutionRunInput; agentIds: string[] }> {
-  validateExecutionRunInput(plan as CreateExecutionRunInput);
-  const clean = structuredClone(plan as CreateExecutionRunInput);
-  const bots = await listBots(); const byId = new Map(bots.map((bot) => [bot.id, bot]));
-  for (const task of clean.tasks) {
-    const bot = byId.get(task.agentId); if (!bot) throw new InputError(`Task ${task.key} refers to an unknown bot.`);
-    if (task.skillId) {
-      if (!EXECUTABLE_SKILL_IDS.includes(task.skillId as never) || !bot.agentConfig?.skillIds.includes(task.skillId)) throw new InputError(`Task ${task.key} uses a skill not enabled for its agent.`);
-      task.input = { ...(task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : {}), skillId: task.skillId, skillInput: task.skillInput };
-    }
-  }
-  return { plan: clean, agentIds: [...new Set(clean.tasks.map((task) => task.agentId))] };
+async function validatePlan(plan: unknown, requireLiveModel = true): Promise<{ plan: CreateExecutionRunInput; agentIds: string[] }> {
+  return validateScheduledWorkflowPlan(plan, await listBots(), requireLiveModel ? resolveModelRoutes : undefined);
 }
 
 function workflowInput(input: CreateScheduledWorkflowInput, now: Date) {
@@ -79,7 +70,7 @@ export async function createScheduledWorkflow(input: CreateScheduledWorkflowInpu
 export async function updateScheduledWorkflow(id: string, patch: Partial<CreateScheduledWorkflowInput & { active: boolean }>): Promise<ScheduledWorkflow> {
   const current = await getScheduledWorkflow(id); if (!current) throw new InputError("Scheduled workflow not found.");
   const merged = { name: patch.name ?? current.name, description: patch.description ?? current.description, objective: patch.objective ?? current.objective, plan: patch.plan ?? current.plan, schedule: patch.schedule ?? current.schedule, timezone: patch.timezone ?? current.timezone, active: patch.active ?? current.status === "active" };
-  const clean = workflowInput(merged, new Date()); const validated = await validatePlan(merged.plan); const now = iso(clean.now);
+  const clean = workflowInput(merged, new Date()); const validated = await validatePlan(merged.plan, patch.plan !== undefined); const now = iso(clean.now);
   const next = clean.active ? nextWorkflowRun(clean.schedule, clean.timezone, clean.now) : null;
   await (await db()).execute({ sql: `UPDATE scheduled_workflows SET name=?,description=?,objective=?,plan_json=?,agent_ids_json=?,schedule_json=?,timezone=?,status=?,updated_at=?,next_run_at=?,last_error=NULL WHERE id=?`, args: [clean.name, clean.description, clean.objective, JSON.stringify(validated.plan), JSON.stringify(validated.agentIds), JSON.stringify(clean.schedule), clean.timezone, clean.active ? "active" : "paused", now, next, id] });
   return (await getScheduledWorkflow(id))!;
