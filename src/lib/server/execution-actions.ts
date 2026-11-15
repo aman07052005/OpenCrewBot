@@ -62,10 +62,11 @@ export async function synchronizeExecutionAction(client: Client, action: ActionR
   const run = await client.execute({ sql: "SELECT status FROM execution_runs WHERE id=?", args: [action.executionRunId] });
   if (!run.rows[0] || String(run.rows[0].status) === "cancelled") return null;
   const now = new Date().toISOString();
+  let transitioned = 0;
   if (action.status === "succeeded") {
-    await client.execute({ sql: "UPDATE execution_tasks SET status='pending',error=NULL,updated_at=? WHERE id=? AND run_id=? AND status='blocked'", args: [now, action.executionTaskId, action.executionRunId] });
+    transitioned = (await client.execute({ sql: "UPDATE execution_tasks SET status='pending',error=NULL,updated_at=? WHERE id=? AND run_id=? AND status='blocked'", args: [now, action.executionTaskId, action.executionRunId] })).rowsAffected;
   } else if (["rejected", "cancelled", "expired", "failed"].includes(action.status)) {
-    await client.execute({ sql: "UPDATE execution_tasks SET status='failed',error=?,updated_at=?,finished_at=? WHERE id=? AND run_id=? AND status='blocked'", args: [action.error ?? `External operation ${action.status}.`, now, now, action.executionTaskId, action.executionRunId] });
+    transitioned = (await client.execute({ sql: "UPDATE execution_tasks SET status='failed',error=?,updated_at=?,finished_at=? WHERE id=? AND run_id=? AND status='blocked'", args: [action.error ?? `External operation ${action.status}.`, now, now, action.executionTaskId, action.executionRunId] })).rowsAffected;
   }
-  return { runId: action.executionRunId, shouldResume: String(run.rows[0].status) === "blocked" };
+  return { runId: action.executionRunId, shouldResume: transitioned > 0 && String(run.rows[0].status) === "blocked" };
 }

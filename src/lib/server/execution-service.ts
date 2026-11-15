@@ -18,6 +18,9 @@ import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
 import { authorizeAction } from "./approval-service.ts";
 import { EXECUTION_EXTERNAL_OPERATIONS, prepareExecutionActions, synchronizeExecutionAction } from "./execution-actions.ts";
 import type { ActionRequest } from "@/lib/shared/types";
+import { enabledReadToolCatalog } from "./mcp-servers.ts";
+import { expireActions } from "./approval-service.ts";
+import { validateSkillInput } from "./skills.ts";
 
 function engineError(error: unknown): never {
   throw new InputError(error instanceof Error ? error.message : "Invalid execution request.");
@@ -32,6 +35,7 @@ export async function createRun(input: CreateExecutionRunInput) {
     if (task.skillId) {
       if (!EXECUTABLE_SKILL_IDS.includes(task.skillId as never)) throw new InputError(`Task ${task.key} refers to an unknown skill.`);
       if (!bots.find((bot) => bot.id === task.agentId)?.agentConfig?.skillIds.includes(task.skillId)) throw new InputError(`Task ${task.key} assigns a skill disabled for its agent.`);
+      try { validateSkillInput(task.skillId as never, task.skillInput); } catch (error) { throw new InputError(`Task ${task.key} has invalid skill input: ${error instanceof Error ? error.message : "validation failed"}.`); }
       task.input = { ...(task.input && typeof task.input === "object" ? task.input as Record<string, unknown> : {}), skillId: task.skillId, skillInput: task.skillInput };
     }
     if (task.externalAction) {
@@ -76,7 +80,7 @@ export async function planChiefOfStaffRequest(input: unknown) {
     throw new InputError("Live planning requires an owner-configured live provider. Select mock planning for a deterministic development plan; no fallback is performed.");
   }
   try {
-    const agents = discoverAgentCapabilities(await listBots(), { tavilyAvailable: keys.tavily() });
+    const agents = discoverAgentCapabilities(await listBots(), { tavilyAvailable: keys.tavily(), mcpReadTools: await enabledReadToolCatalog() });
     const plan = await planChiefOfStaff(request, {
       agents,
       generateLivePlan: request.planningMode === "live" ? createLiveChiefOfStaffPlanGenerator() : undefined,
@@ -97,13 +101,20 @@ export async function createChiefOfStaffRun(input: unknown) {
   if (request.plan.planningMode !== request.planningMode) throw new InputError("Planning mode does not match the generated plan.");
   const bots = await listBots();
   try {
-    validateChiefOfStaffPlan(request.plan, bots.map((bot) => bot.id));
-    const executionInput = toExecutionRunInput(request);
+    const agents = discoverAgentCapabilities(bots, { tavilyAvailable: keys.tavily(), mcpReadTools: await enabledReadToolCatalog() });
+    validateChiefOfStaffPlan(request.plan, agents);
+    const executionInput = toExecutionRunInput(request, agents);
     return await createRun(executionInput);
   } catch (error) {
     if (error instanceof InputError) throw error;
     throw new InputError(error instanceof Error ? error.message : "The Chief of Staff plan could not be saved.");
   }
+}
+
+/** Scheduler hook: expiry is durable even when no approvals page is open. */
+export async function tickExpiredExecutionActions(): Promise<void> {
+  const client = await db();
+  for (const action of await expireActions(client)) await synchronizeActionExecution(action);
 }
 
 export async function runs(limit: number, offset = 0, before?: { createdAt: string; id: string }) {

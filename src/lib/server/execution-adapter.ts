@@ -10,6 +10,7 @@ import { createMastraTaskExecutor } from "./execution-task-executor";
 import { executeSkill } from "./skills.ts";
 import { EXECUTABLE_SKILL_IDS } from "@/lib/shared/agent-skills";
 import { executeTaskExternalAction, taskExternalAction } from "./execution-actions.ts";
+import { memoryForPrompt } from "./memory-files";
 
 async function verifiedRoomId(task: ExecutionTask): Promise<string | undefined> {
   if (!collaborationContext(task.input)) return undefined;
@@ -25,7 +26,7 @@ async function loadMemory(task: ExecutionTask, bot: Bot) {
 
 /** Choose the persisted run mode without ever falling back from live to mock. */
 export function executionTaskExecutor(mode: ExecutionMode): TaskExecutor {
-  const base = mode === "mock" ? deterministicMockExecutor : mode === "live" ? createMastraTaskExecutor({ getBot, runtime: { runTask: runIsolatedExecutionTask }, loadMemory }) : null;
+  const base = mode === "mock" ? deterministicMockExecutor : mode === "live" ? createMastraTaskExecutor({ getBot, runtime: { runTask: runIsolatedExecutionTask }, loadMemory, systemContextCharacters: (bot) => bot.tools.memory ? memoryForPrompt(bot.id).text.length : 0 }) : null;
   if (!base) throw new Error(`Unsupported execution mode: ${String(mode)}.`);
   return { retrySafety: base.retrySafety, execute: async (task, context) => {
     const roomId = await verifiedRoomId(task);

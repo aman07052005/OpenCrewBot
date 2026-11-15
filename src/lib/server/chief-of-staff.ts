@@ -1,7 +1,8 @@
 import { z } from "zod";
-import type { Bot, ChiefOfStaffPlan, ChiefOfStaffTask, CreateChiefOfStaffRunInput, CreateExecutionRunInput } from "@/lib/shared/types";
+import type { Bot, ChiefOfStaffPlan, ChiefOfStaffTask, CreateChiefOfStaffRunInput, CreateExecutionRunInput, ExecutionExternalAction } from "@/lib/shared/types";
 import { validateExecutionRunInput } from "./execution-engine.ts";
-import { skillForObjective } from "./skills.ts";
+import { skillForObjective, validateSkillInput } from "./skills.ts";
+import { EXECUTABLE_SKILL_IDS } from "../shared/agent-skills.ts";
 
 export const MAX_CHIEF_OF_STAFF_TASKS = 20;
 const MAX_WORK_TASKS = MAX_CHIEF_OF_STAFF_TASKS - 1;
@@ -21,8 +22,13 @@ const TaskSchema = z.object({
   dependsOn: z.array(z.string().min(1).max(80)).max(MAX_CHIEF_OF_STAFF_TASKS),
   rationale: z.string().trim().min(1).max(2_000),
   isFinalConsolidation: z.boolean(),
-  skillId: z.string().optional(),
-}).strict();
+  skillId: z.string().min(1).optional(),
+  skillInput: z.unknown().optional(),
+  externalAction: z.object({ operation: z.enum(["github.public.read", "mcp.read.invoke"]), arguments: z.unknown() }).strict().optional(),
+}).strict().superRefine((task, context) => {
+  if (task.skillId && task.externalAction) context.addIssue({ code: "custom", message: "A task cannot combine a registered skill and an external operation." });
+  if (task.isFinalConsolidation && (task.skillId || task.externalAction)) context.addIssue({ code: "custom", message: "The final consolidation task cannot execute a skill or external operation." });
+});
 
 export const ChiefOfStaffPlanSchema = z.object({
   rationale: z.string().trim().min(1).max(8_000),
@@ -49,7 +55,10 @@ export const ChiefOfStaffModelPlanSchema = z.object({
     agentId: z.string().trim().min(1).max(200),
     dependsOn: z.array(z.string().min(1).max(80)).max(MAX_CHIEF_OF_STAFF_TASKS),
     rationale: z.string().trim().min(1).max(2_000),
-  }).strict()).min(1).max(MAX_WORK_TASKS),
+    skillId: z.enum(EXECUTABLE_SKILL_IDS).optional(),
+    skillInput: z.unknown().optional(),
+    externalAction: z.object({ operation: z.enum(["github.public.read", "mcp.read.invoke"]), arguments: z.unknown() }).strict().optional(),
+  }).strict().superRefine((task, context) => { if (task.skillId && task.externalAction) context.addIssue({ code: "custom", message: "Choose either a skill or an external operation." }); })).min(1).max(MAX_WORK_TASKS),
   finalAgentId: z.string().trim().min(1).max(200),
   finalRationale: z.string().trim().min(1).max(2_000),
 }).strict();
@@ -61,13 +70,27 @@ export type AgentCapability = {
   description: string;
   instructions: string;
   model: string;
+  localOnly: boolean;
   enabledTools: string[];
   availableDuringExecution: string[];
   unavailableDuringExecution: string[];
   connectedServices: string[];
   skillIds: string[];
+  skillInputHints: Record<string, string>;
   skillsAreMetadataOnly: boolean;
   expectedOutputFormat: string;
+  permittedOperations: Array<{ operation: ExecutionExternalAction["operation"]; argumentHint: string; serverId?: string; tools?: string[] }>;
+};
+
+const SKILL_INPUT_HINTS: Record<string, string> = {
+  "skill.market-research": "{question, industry?, geography?, evidence:[{title,url,excerpt?}]}",
+  "skill.competitor-analysis": "{competitors:[{name,pricing?,customers?,positioning?,strengths:[],weaknesses:[],evidence:[]}]}",
+  "skill.financial-modelling": "{revenue,operatingCosts,costOfGoodsSold?,taxRate?,fixedCosts?,pricePerUnit?,variableCostPerUnit?,periods?,growthRate?,projectionPeriods?}",
+  "skill.presentation-creation": "{title,audience,objective,slideCount?,recommendations:[]}",
+  "skill.email-drafting": "{recipientRole,objective,tone?,subject?,callToAction}",
+  "skill.code-review": "{files:[{path,content}]}",
+  "skill.data-analysis": "{csv? or records?, groupBy?, valueColumn?}",
+  "skill.lead-generation": "{industry,geography,criteria?,organizations:[]}",
 };
 
 export type LivePlanGenerator = (input: {
@@ -82,7 +105,7 @@ export class ChiefOfStaffPlanningError extends Error {
   }
 }
 
-export function discoverAgentCapabilities(bots: Bot[], options: { tavilyAvailable?: boolean } = {}): AgentCapability[] {
+export function discoverAgentCapabilities(bots: Bot[], options: { tavilyAvailable?: boolean; mcpReadTools?: Array<{ serverId: string; serverName: string; tools: string[] }> } = {}): AgentCapability[] {
   return bots.map((bot) => {
     const enabledTools: string[] = [];
     const availableDuringExecution: string[] = [];
@@ -111,8 +134,11 @@ export function discoverAgentCapabilities(bots: Bot[], options: { tavilyAvailabl
     }
     if ((bot.connections ?? []).length) {
       enabledTools.push("Connected services: " + bot.connections.join(", "));
-      unavailableDuringExecution.push("Connected app and MCP actions are unavailable in persistent execution tasks.");
     }
+    const permittedOperations: AgentCapability["permittedOperations"] = [];
+    if (bot.tools.askUser && (bot.tools.webSearch || bot.connections.includes("composio:github"))) permittedOperations.push({ operation: "github.public.read", argumentHint: "{operation: metadata|file|directory|issue|pull-request, repository: owner/name, path?, ref?, number?}" });
+    for (const server of options.mcpReadTools ?? []) if (bot.tools.askUser && bot.connections.includes(`mcp:${server.serverId}`)) permittedOperations.push({ operation: "mcp.read.invoke", serverId: server.serverId, tools: server.tools, argumentHint: `{serverId: ${server.serverId}, tool: one enabled tool name, input: bounded JSON}` });
+    if (bot.connections.some((connection) => connection.startsWith("mcp:")) && !permittedOperations.some((item) => item.operation === "mcp.read.invoke")) unavailableDuringExecution.push("MCP actions are unavailable because no assigned tool is owner-enabled for persistent read-only execution.");
 
     return {
       id: bot.id,
@@ -121,13 +147,16 @@ export function discoverAgentCapabilities(bots: Bot[], options: { tavilyAvailabl
       description: bot.description || "",
       instructions: bot.instructions || "",
       model: bot.model,
+      localOnly: bot.modelConfig?.localOnly === true,
       enabledTools,
       availableDuringExecution,
       unavailableDuringExecution,
       connectedServices: [...(bot.connections ?? [])],
       skillIds: [...(bot.agentConfig?.skillIds ?? [])],
+      skillInputHints: Object.fromEntries((bot.agentConfig?.skillIds ?? []).filter((id) => SKILL_INPUT_HINTS[id]).map((id) => [id, SKILL_INPUT_HINTS[id]])),
       skillsAreMetadataOnly: false,
       expectedOutputFormat: bot.agentConfig?.expectedOutputFormat ?? "",
+      permittedOperations,
     };
   });
 }
@@ -161,6 +190,14 @@ function selectAgent(capabilities: AgentCapability[], objective: string): AgentC
   return ranked[0].agent;
 }
 
+function defaultSkillInput(skillId: string | undefined, objective: string): unknown {
+  if (skillId === "skill.market-research") return { question: objective, evidence: [] };
+  if (skillId === "skill.presentation-creation") return { title: shortLabel(objective), audience: "Business stakeholders", objective, slideCount: 8, recommendations: [] };
+  if (skillId === "skill.email-drafting") return { recipientRole: "Business stakeholder", objective, tone: "professional", callToAction: "Please review and respond with next steps." };
+  if (skillId === "skill.lead-generation") return { industry: "Specified in the instruction", geography: "Specified in the instruction", criteria: objective, organizations: [] };
+  return undefined;
+}
+
 function deterministicMockPlan(instruction: string, agents: AgentCapability[]): ChiefOfStaffPlan {
   if (!agents.length) throw new ChiefOfStaffPlanningError("Create at least one agent before planning work.");
   const objectives = objectivesFor(instruction);
@@ -169,7 +206,9 @@ function deterministicMockPlan(instruction: string, agents: AgentCapability[]): 
       ? `Analyze and carry out the requested work: ${objective}`
       : `Address this requested objective: ${objective}`;
     const agent = selectAgent(agents, taskText);
-    const skillId = skillForObjective(taskText, agent.skillIds);
+    const candidateSkill = skillForObjective(taskText, agent.skillIds);
+    const skillInput = defaultSkillInput(candidateSkill, objective);
+    const skillId = skillInput ? candidateSkill : undefined;
     const score = [...words(taskText)].filter((token) => words([agent.name, agent.role, agent.description, agent.instructions].join(" ")).has(token)).length;
     return {
       key: `work-${index + 1}`,
@@ -184,6 +223,7 @@ function deterministicMockPlan(instruction: string, agents: AgentCapability[]): 
         : `Selected ${agent.name}; no configured agent profile had a stronger keyword match for this objective.`,
       isFinalConsolidation: false,
       skillId,
+      skillInput,
     };
   });
   const finalAgent = selectAgent(agents, "synthesize findings and produce a polished final business deliverable");
@@ -202,7 +242,7 @@ function deterministicMockPlan(instruction: string, agents: AgentCapability[]): 
     planningMode: "mock",
     planningLabel: "MOCK PLANNING · deterministic development plan · no model call",
   };
-  return validateChiefOfStaffPlan(plan, agents.map((agent) => agent.id));
+  return validateChiefOfStaffPlan(plan, agents);
 }
 
 function planFromLiveModel(value: unknown, agents: AgentCapability[]): ChiefOfStaffPlan {
@@ -225,10 +265,10 @@ function planFromLiveModel(value: unknown, agents: AgentCapability[]): ChiefOfSt
     tasks: [...parsed.data.tasks.map((task) => ({ ...task, isFinalConsolidation: false })), finalTask],
     planningMode: "live",
     planningLabel: "LIVE PLANNING · generated by configured model",
-  }, agents.map((agent) => agent.id));
+  }, agents);
 }
 
-export function validateChiefOfStaffPlan(plan: unknown, agentIds: string[]): ChiefOfStaffPlan {
+export function validateChiefOfStaffPlan(plan: unknown, agents: AgentCapability[] | string[]): ChiefOfStaffPlan {
   const parsed = ChiefOfStaffPlanSchema.parse(plan);
   const finalTasks = parsed.tasks.filter((task) => task.isFinalConsolidation);
   if (finalTasks.length !== 1 || parsed.tasks.at(-1)?.key !== FINAL_TASK_KEY || finalTasks[0]?.key !== FINAL_TASK_KEY) {
@@ -239,10 +279,21 @@ export function validateChiefOfStaffPlan(plan: unknown, agentIds: string[]): Chi
   if (workTasks.some((task) => task.isFinalConsolidation || task.key === FINAL_TASK_KEY)) {
     throw new ChiefOfStaffPlanningError("Only the final task may be marked as the final consolidation task.");
   }
-  const knownAgents = new Set(agentIds);
+  const capabilities = typeof agents[0] === "string" ? null : agents as AgentCapability[];
+  const knownAgents = new Set(capabilities ? capabilities.map((agent) => agent.id) : agents as string[]);
   for (const task of parsed.tasks) {
     if (!knownAgents.has(task.agentId)) throw new ChiefOfStaffPlanningError(`Task “${task.title}” refers to unknown agent ID ${task.agentId}.`);
     if (new Set(task.dependsOn).size !== task.dependsOn.length) throw new ChiefOfStaffPlanningError(`Task “${task.title}” has duplicate dependencies.`);
+    const capability = capabilities?.find((agent) => agent.id === task.agentId);
+    if (task.skillId) {
+      if (!EXECUTABLE_SKILL_IDS.includes(task.skillId as never) || !capability?.skillIds.includes(task.skillId)) throw new ChiefOfStaffPlanningError(`Task “${task.title}” selects a skill that is not enabled for its assigned agent.`);
+      try { validateSkillInput(task.skillId as never, task.skillInput); } catch (error) { throw new ChiefOfStaffPlanningError(`Task “${task.title}” has invalid skill input: ${error instanceof Error ? error.message : "validation failed"}.`); }
+    }
+    if (task.externalAction && capability) {
+      const args = task.externalAction.arguments as { serverId?: unknown; tool?: unknown } | null;
+      const permitted = capability.permittedOperations.some((item) => item.operation === task.externalAction?.operation && (item.operation !== "mcp.read.invoke" || (args?.serverId === item.serverId && item.tools?.includes(String(args?.tool)))));
+      if (!permitted) throw new ChiefOfStaffPlanningError(`Task “${task.title}” selects an external operation outside the assigned agent's permitted catalog.`);
+    }
   }
   const expectedFinalDependencies = workTasks.map((task) => task.key).sort();
   if ([...finalTasks[0].dependsOn].sort().join("\0") !== expectedFinalDependencies.join("\0")) {
@@ -285,6 +336,9 @@ function executionInputFromPlan(input: CreateChiefOfStaffRunInput, plan: ChiefOf
       },
       dependsOn: task.dependsOn,
       requiresApproval: false,
+      skillId: task.skillId,
+      skillInput: task.skillInput,
+      externalAction: task.externalAction,
     })),
   };
 }
@@ -309,9 +363,9 @@ export async function planChiefOfStaff(input: unknown, options: {
   return planFromLiveModel(output, agents);
 }
 
-export function toExecutionRunInput(input: CreateChiefOfStaffRunInput): CreateExecutionRunInput {
+export function toExecutionRunInput(input: CreateChiefOfStaffRunInput, agents?: AgentCapability[]): CreateExecutionRunInput {
   if (input.plan.planningMode !== input.planningMode) throw new ChiefOfStaffPlanningError("Planning mode does not match the generated plan.");
-  const plan = validateChiefOfStaffPlan(input.plan, input.plan.tasks.map((task) => task.agentId));
+  const plan = validateChiefOfStaffPlan(input.plan, agents ?? input.plan.tasks.map((task) => task.agentId));
   return executionInputFromPlan(input, plan);
 }
 

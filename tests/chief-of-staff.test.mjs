@@ -142,6 +142,35 @@ test("live planning decomposes work, selects configured agents, and adds a final
   assert.deepEqual(plan.tasks[2].dependsOn, ["research-feedback", "draft-update"]);
 });
 
+test("planner selects enabled skills and permitted reads and persists their validated arguments", async () => {
+  const capableBot = {
+    ...bots[0],
+    tools: { ...bots[0].tools, askUser: true },
+    connections: ["composio:github", "mcp:catalog"],
+    agentConfig: { skillIds: ["skill.market-research"], expectedOutputFormat: "Structured findings" },
+  };
+  const catalog = discoverAgentCapabilities([capableBot], { mcpReadTools: [{ serverId: "catalog", serverName: "Catalog", tools: ["get_product"] }] });
+  const output = {
+    rationale: "Retrieve public metadata, then analyze supplied evidence with the registered skill.",
+    tasks: [
+      { key: "github", title: "Read repository metadata", instructions: "Retrieve bounded public metadata.", agentId: "researcher", dependsOn: [], rationale: "GitHub read is permitted.", externalAction: { operation: "github.public.read", arguments: { operation: "metadata", repository: "openai/openai-node" } } },
+      { key: "research", title: "Build research framework", instructions: "Use the registered skill.", agentId: "researcher", dependsOn: ["github"], rationale: "The skill is enabled.", skillId: "skill.market-research", skillInput: { question: "What does the repository indicate?", evidence: [] } },
+    ],
+    finalAgentId: "researcher", finalRationale: "Synthesize the persisted outputs.",
+  };
+  const plan = await planChiefOfStaff({ instruction: "Inspect the repository and summarize it", planningMode: "live" }, { agents: catalog, generateLivePlan: async () => output });
+  const runInput = toExecutionRunInput({ name: "Tool plan", concurrencyLimit: 1, executionMode: "live", originalInstruction: "Inspect the repository and summarize it", planningMode: "live", plan }, catalog);
+  assert.deepEqual(runInput.tasks[0].externalAction, output.tasks[0].externalAction);
+  assert.equal(runInput.tasks[1].skillId, "skill.market-research");
+  assert.deepEqual(runInput.tasks[1].skillInput, output.tasks[1].skillInput);
+  assert.match(JSON.stringify(catalog[0].permittedOperations), /get_product/);
+
+  const invalid = structuredClone(output); invalid.tasks[1].skillId = "skill.data-analysis";
+  await assert.rejects(planChiefOfStaff({ instruction: "Analyze", planningMode: "live" }, { agents: catalog, generateLivePlan: async () => invalid }), /not enabled/);
+  const unauthorized = structuredClone(output); unauthorized.tasks[0].externalAction = { operation: "mcp.read.invoke", arguments: { serverId: "catalog", tool: "delete_product", input: {} } };
+  await assert.rejects(planChiefOfStaff({ instruction: "Analyze", planningMode: "live" }, { agents: catalog, generateLivePlan: async () => unauthorized }), /outside the assigned agent's permitted catalog/);
+});
+
 test("malformed live model output is rejected", async () => {
   await assert.rejects(planChiefOfStaff({ instruction: "Create a business report", planningMode: "live" }, {
     agents: capabilities,

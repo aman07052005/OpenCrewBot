@@ -13,8 +13,9 @@ function plannerPrompt(instruction: string, agents: AgentCapability[]): string {
     "Assign each work task and the final deliverable to an existing agent using its role, description, instructions, configured model, and tools.",
     "Use only agent IDs present in the catalog. Keep the plan focused, normally 2–8 work tasks, and never exceed the output schema limits.",
     "Task keys must be unique and must not use the reserved key 'final-deliverable'. Dependencies must refer only to other work-task keys. Avoid circular dependencies.",
-    "Do not assume an agent can use tools that are not listed. Persistent execution only exposes the listed read-only execution tools. Browser, memory, connected app actions, and interactive approvals are unavailable in task sessions.",
-    "For requested external actions or changes, create analysis or draft tasks and state limitations in task instructions; planning does not grant tools or approvals.",
+    "Each work task may be a normal agent task, one enabled registered skill (skillId plus schema-valid skillInput), or one permitted read-only external operation (externalAction plus arguments). Never combine them.",
+    "Select only skills and operations listed for that exact assigned agent. GitHub and MCP operations run later as persistent tasks through server validation and the owner's approval policy; you do not execute them or grant permission.",
+    "Never select writes, Gmail, unlisted tools, browser control, memory mutation, or interactive actions. For unsupported external changes, create draft-only agent work and state the limitation.",
     "The application adds a final consolidation task that depends on all work tasks. Choose a suitable existing agent for it.",
     "Return a specific planning rationale and a short rationale for every assignment.",
     "## User business instruction",
@@ -29,6 +30,7 @@ function plannerPrompt(instruction: string, agents: AgentCapability[]): string {
 export function createLiveChiefOfStaffPlanGenerator(modelId = process.env.OPENCREWBOT_PLANNER_MODEL?.trim() || DEFAULT_MODEL): LivePlanGenerator {
   return async ({ instruction, agents }) => {
     const route = globalProviderRoute("planner", modelId);
+    if (route.providerId !== "ollama" && route.providerId !== "mock" && agents.some((agent) => agent.localOnly)) throw new Error("Selected local-only agents cannot have their configuration sent to a hosted planning provider. Use the local planner or deselect those agents.");
     const started = Date.now();
     const result = route.providerId === "ollama"
       ? await generateLocalStructured(route, 'You plan business work for an owner and select only from the supplied OpenCrewBot agents. You do not execute tasks or call tools.', localPlannerPrompt(instruction, agents), z.toJSONSchema(ChiefOfStaffModelPlanSchema), { timeoutMs: 300_000, maxOutputTokens: 3072 })

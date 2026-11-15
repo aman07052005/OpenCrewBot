@@ -4,7 +4,7 @@ import { createClient } from "@libsql/client";
 import { migrateExecutionSchema } from "../src/lib/server/execution-schema.ts";
 import { migrateApprovalSchema } from "../src/lib/server/approval-schema.ts";
 import { createExecutionRun, getExecutionRun, startExecutionRun } from "../src/lib/server/execution-engine.ts";
-import { authorizeAction, decideAction, executeApprovedAction, getExecutionTaskAction } from "../src/lib/server/approval-service.ts";
+import { authorizeAction, decideAction, executeApprovedAction, expireActions, getExecutionTaskAction } from "../src/lib/server/approval-service.ts";
 import { executeTaskExternalAction, prepareExecutionActions, synchronizeExecutionAction } from "../src/lib/server/execution-actions.ts";
 
 const githubArgs = { operation: "metadata", repository: "openai/openai-node" };
@@ -93,4 +93,26 @@ test("Controlled Access executes an assigned MCP read task without exposing arbi
   run = await settle(client, run.id);
   assert.equal(run.status, "completed"); assert.equal(calls, 1);
   assert.deepEqual(run.tasks[0].output.result, { synthetic: true, sku: "DEMO-100", price: 120 });
+});
+
+test("expired approval fails its task, skips dependents, and never invokes the provider", async (t) => {
+  const client = await fixture(t); const bot = baseBot("ask"); let calls = 0;
+  let run = await createExecutionRun(client, { name: "Expired read", executionMode: "live", tasks: [
+    { key: "read", title: "Read repository", agentId: bot.id, input: { externalAction: { operation: "github.public.read", arguments: githubArgs } } },
+    { key: "dependent", title: "Analyze repository", agentId: bot.id, dependsOn: ["read"], input: { instructions: "Analyze it." } },
+  ] });
+  await prepareExecutionActions(client, run, [bot]); run = await getExecutionRun(client, run.id);
+  const action = await getExecutionTaskAction(client, run.tasks.find((item) => item.title === "Read repository").id);
+  await client.execute({ sql: "UPDATE action_requests SET expires_at=? WHERE id=?", args: ["2000-01-01T00:00:00.000Z", action.id] });
+  const [expired] = await expireActions(client);
+  assert.equal(expired.status, "expired"); assert.equal(expired.invocationCount, 0);
+  assert.ok((await expireActions(client)).some((item) => item.id === expired.id), "a crashed scheduler can recover an expired blocked task");
+  await executeApprovedAction(client, expired.id, bot, { githubRead: async () => { calls++; return {}; } });
+  await synchronizeExecutionAction(client, expired);
+  await startExecutionRun(client, run.id, { retrySafety: "never", execute: async () => assert.fail("expired dependency must not execute") });
+  run = await settle(client, run.id);
+  assert.equal(calls, 0);
+  assert.equal(run.status, "failed");
+  assert.equal(run.tasks.find((item) => item.title === "Read repository").status, "failed");
+  assert.equal(run.tasks.find((item) => item.title === "Analyze repository").status, "skipped");
 });

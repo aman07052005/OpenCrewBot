@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildExecutionPrompt, createMastraTaskExecutor } from "../src/lib/server/execution-task-executor.ts";
+import { buildExecutionPrompt, createMastraTaskExecutor, executionPromptBudget } from "../src/lib/server/execution-task-executor.ts";
 import { executionToolCategory, restrictExecutionPermissions } from "../src/lib/server/execution-permissions.ts";
 
 const bot = {
@@ -71,6 +71,30 @@ test("ordinary execution input objects with an instructions field keep their com
   const prompt = buildExecutionPrompt(task({ input }), []);
   assert.match(prompt, /"instructions": "Keep this as ordinary task data\."/);
   assert.match(prompt, /"otherField": "Do not discard me\."/);
+});
+
+test("large integration dependencies are projected with provenance while full outputs remain unchanged", () => {
+  const fullText = "repository source line\n".repeat(1_000);
+  const output = { mode: "live", externalAction: true, actionId: "action-1", operation: "github.public.read", result: { integration: "github", repository: "owner/repo", path: "src/index.ts", text: fullText } };
+  const before = structuredClone(output);
+  const prompt = buildExecutionPrompt(task(), [{ taskId: "github-task", title: "Read GitHub file", agentId: "bot-scout", output }], { maxCharacters: 5_500 });
+  assert.ok(prompt.length <= 5_500);
+  assert.match(prompt, /sourceProvenance/);
+  assert.match(prompt, /github\.public\.read/);
+  assert.match(prompt, /fullOutputRetainedInExecutionHistory/);
+  assert.match(prompt, /omissions/);
+  assert.doesNotMatch(prompt, new RegExp(fullText.slice(0, 4_000).replaceAll("\n", "\\n")));
+  assert.deepEqual(output, before, "projection must not mutate persistent task output");
+  assert.throws(() => buildExecutionPrompt(task(), [{ taskId: "x", title: "X", agentId: "a", output }], { maxCharacters: 500 }), /cannot be reduced safely|cannot fit/);
+});
+
+test("live prompt budgeting reserves system, memory, and output capacity", async () => {
+  let request;
+  const configured = { ...bot, modelConfig: { providerId: "ollama", primaryModel: "tiny", routingMode: "fixed", localOnly: true, maxOutputTokens: 900 } };
+  const memory = "memory ".repeat(100);
+  const executor = createMastraTaskExecutor({ getBot: async () => configured, loadMemory: async () => memory, runtime: { runTask: async (value) => { request = value; return { text: "ok", model: "tiny" }; } } });
+  await executor.execute(task(), { signal: new AbortController().signal, idempotencyKey: "budget", dependencies: [] });
+  assert.ok(request.content.length <= executionPromptBudget(configured, memory) + memory.length + 2);
 });
 
 test("concurrent tasks receive different isolated session IDs", async () => {

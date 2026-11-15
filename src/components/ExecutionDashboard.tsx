@@ -566,6 +566,8 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
     if (plan.planningMode !== planningMode) return setError("Generate a new plan after changing the planning mode.");
     if (!instruction.trim()) return setError("The original business instruction is required.");
     if (!plan.tasks.every((task) => task.title.trim() && task.instructions.trim() && task.agentId)) return setError("Complete each task title, instruction, and agent assignment.");
+    if (plan.tasks.some((task) => task.skillId === "")) return setError("Choose an enabled registered skill for each skill task.");
+    if (executionMode !== "live" && plan.tasks.some((task) => task.externalAction)) return setError("Planner-selected GitHub and MCP reads require LIVE execution mode and the existing approval lifecycle.");
     const concurrencyLimit = Number(concurrency);
     if (!Number.isInteger(concurrencyLimit) || concurrencyLimit < 1 || concurrencyLimit > 32) return setError("Concurrency must be between 1 and 32.");
     setSaving(true);
@@ -650,6 +652,16 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
                 </div>
                 <Field label="Task title"><input className={inputClass} value={task.title} onChange={(event) => updateTask(task.key, { title: event.target.value })} maxLength={300} /></Field>
                 <Field label="Assigned agent"><select className={inputClass} value={task.agentId} onChange={(event) => updateTask(task.key, { agentId: event.target.value })}><option value="">Choose an existing agent</option>{selectedBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} · {bot.title || bot.model}</option>)}</select></Field>
+                {!task.isFinalConsolidation && <>
+                  <Field label="Execution type" hint="External reads are validated and approved later; the planner cannot execute them."><select className={inputClass} value={task.externalAction ? task.externalAction.operation : task.skillId !== undefined ? "skill" : "agent"} onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === "agent") updateTask(task.key, { skillId: undefined, skillInput: undefined, externalAction: undefined });
+                    else if (value === "skill") updateTask(task.key, { skillId: selectedBots.find((bot) => bot.id === task.agentId)?.agentConfig?.skillIds.find((id) => EXECUTABLE_SKILL_IDS.includes(id as never)) ?? "", skillInput: {}, externalAction: undefined });
+                    else updateTask(task.key, { skillId: undefined, skillInput: undefined, externalAction: { operation: value as "github.public.read" | "mcp.read.invoke", arguments: {} } });
+                  }}><option value="agent">Normal agent task</option><option value="skill">Registered executable skill</option><option value="github.public.read">GitHub public read</option><option value="mcp.read.invoke">Trusted MCP read</option></select></Field>
+                  {task.skillId !== undefined && <Field label="Registered skill"><select className={inputClass} value={task.skillId} onChange={(event) => updateTask(task.key, { skillId: event.target.value, skillInput: {} })}><option value="">Choose an enabled skill</option>{EXECUTABLE_SKILL_IDS.filter((id) => selectedBots.find((bot) => bot.id === task.agentId)?.agentConfig?.skillIds.includes(id)).map((id) => <option key={id} value={id}>{id}</option>)}</select></Field>}
+                  {(task.skillId !== undefined || task.externalAction) && <Field label={task.skillId !== undefined ? "Skill input (JSON)" : "Operation arguments (JSON)"} hint="Schemas and the assigned agent's permissions are rechecked when the run is created."><textarea key={`${task.key}:${task.skillId ?? task.externalAction?.operation}`} className={clsx(inputClass, "min-h-24 font-mono text-[11px]")} defaultValue={JSON.stringify(task.skillId !== undefined ? task.skillInput ?? {} : task.externalAction?.arguments ?? {}, null, 2)} onBlur={(event) => { try { const value = JSON.parse(event.target.value); if (task.skillId !== undefined) updateTask(task.key, { skillInput: value }); else if (task.externalAction) updateTask(task.key, { externalAction: { ...task.externalAction, arguments: value } }); setError(null); } catch { setError(`Task ${index + 1} has invalid JSON arguments.`); } }} /></Field>}
+                </>}
                 <Field label="Task instructions"><textarea className={clsx(inputClass, "min-h-24 resize-y")} value={task.instructions} onChange={(event) => updateTask(task.key, { instructions: event.target.value })} maxLength={8_000} /></Field>
                 <div>
                   <p className="mb-1.5 text-[12px] font-medium text-mute">Dependencies</p>

@@ -242,7 +242,7 @@ async function runIsolatedExecutionAttempt(request: IsolatedExecutionRequest, ro
     name: bot.name,
     instructions: () => systemPrompt(bot, capabilities, safeTools.instructions, { allowAskUser: false, memoryReadOnly: true }),
     model: languageModelFor(route),
-    defaultOptions: bot.modelConfig?.maxOutputTokens ? { modelSettings: { maxOutputTokens: bot.modelConfig.maxOutputTokens } } : undefined,
+    defaultOptions: { modelSettings: { maxOutputTokens: Math.min(bot.modelConfig?.maxOutputTokens ?? 768, 1_536) } },
     tools: safeTools.tools,
     memory,
   });

@@ -40,6 +40,12 @@ export async function listServers(): Promise<McpServer[]> {
   return (await stored()).map(toPublic);
 }
 
+/** Persisted owner allow-list for planning. This never connects to or invokes an MCP server. */
+export async function enabledReadToolCatalog(): Promise<Array<{ serverId: string; serverName: string; tools: string[] }>> {
+  const enabled = (await getSetting<Record<string, string[]>>(ENABLED_TOOLS_KEY)) ?? {};
+  return (await stored()).map((server) => ({ serverId: server.id, serverName: server.name, tools: [...(enabled[server.id] ?? [])].slice(0, 20) })).filter((item) => item.tools.length > 0);
+}
+
 /** Tool names are prefixed with the server key, so keep it short and safe. */
 export function serverKey(id: string): string {
   return `mcp_${id}`;

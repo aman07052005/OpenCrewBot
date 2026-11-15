@@ -78,8 +78,23 @@ export async function proposeAction(client: Client, bot: Bot, input: { operation
 }
 export async function getAction(client: Client, id: string): Promise<ActionRequest | null> { const result = await client.execute({ sql: "SELECT * FROM action_requests WHERE id=?", args: [id] }); return result.rows[0] ? row(result.rows[0] as Record<string, unknown>) : null; }
 export async function getExecutionTaskAction(client: Client, taskId: string): Promise<ActionRequest | null> { const result = await client.execute({ sql: "SELECT * FROM action_requests WHERE execution_task_id=?", args: [taskId] }); return result.rows[0] ? row(result.rows[0] as Record<string, unknown>) : null; }
-export async function listActions(client: Client, status?: string): Promise<ActionRequest[]> { await expireActions(client); const result = await client.execute(status ? { sql: "SELECT * FROM action_requests WHERE status=? ORDER BY created_at DESC LIMIT 200", args: [status] } : "SELECT * FROM action_requests ORDER BY created_at DESC LIMIT 200"); return Promise.all(result.rows.map(async (item) => { const action = row(item as Record<string, unknown>); return { ...action, audit: await actionAudit(client, action.id) }; })); }
-async function expireActions(client: Client) { const now = new Date().toISOString(); const expired = await client.execute({ sql: "UPDATE action_requests SET status='expired',decided_at=? WHERE status='pending' AND expires_at IS NOT NULL AND expires_at<? RETURNING id", args: [now, now] }); for (const item of expired.rows) await audit(client, String(item.id), "expired", "Approval expired before a decision."); }
+export async function listActions(client: Client, status?: string, expire = true): Promise<ActionRequest[]> { if (expire) await expireActions(client); const result = await client.execute(status ? { sql: "SELECT * FROM action_requests WHERE status=? ORDER BY created_at DESC LIMIT 200", args: [status] } : "SELECT * FROM action_requests ORDER BY created_at DESC LIMIT 200"); return Promise.all(result.rows.map(async (item) => { const action = row(item as Record<string, unknown>); return { ...action, audit: await actionAudit(client, action.id) }; })); }
+export async function expireActions(client: Client): Promise<ActionRequest[]> {
+  const now = new Date().toISOString();
+  const expired = await client.execute({ sql: "UPDATE action_requests SET status='expired',decided_at=?,error=? WHERE status='pending' AND expires_at IS NOT NULL AND expires_at<? RETURNING id", args: [now, "Approval expired before a decision; the external provider was not invoked.", now] });
+  const actions = new Map<string, ActionRequest>();
+  for (const item of expired.rows) {
+    await audit(client, String(item.id), "expired", "Approval expired before a decision; provider invocation was prevented.");
+    const action = await getAction(client, String(item.id));
+    if (action) actions.set(action.id, action);
+  }
+  // Crash recovery: an action may have expired just before a process stopped,
+  // leaving its linked execution task blocked. Return it until synchronization
+  // performs the idempotent blocked -> failed transition.
+  const stranded = await client.execute("SELECT a.* FROM action_requests a JOIN execution_tasks t ON t.id=a.execution_task_id WHERE a.status='expired' AND t.status='blocked' LIMIT 200");
+  for (const item of stranded.rows) { const action = row(item as Record<string, unknown>); actions.set(action.id, action); }
+  return [...actions.values()];
+}
 export async function decideAction(client: Client, id: string, decision: "approve" | "reject" | "cancel"): Promise<ActionRequest | null> { await expireActions(client); const next = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "cancelled"; const reason = decision === "approve" ? "Approved by owner." : decision === "reject" ? "Rejected by owner." : "Cancelled by owner."; const updated = await client.execute({ sql: "UPDATE action_requests SET status=?,decided_at=? WHERE id=? AND status='pending'", args: [next, new Date().toISOString(), id] }); if (!updated.rowsAffected) return null; await audit(client, id, next, reason); return getAction(client, id); }
 const g = globalThis as unknown as { __simulatedActionInvocations?: number };
 export function simulatedInvocationCount() { return g.__simulatedActionInvocations ?? 0; }

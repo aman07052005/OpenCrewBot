@@ -335,6 +335,8 @@ export interface ChiefOfStaffTask {
   rationale: string;
   isFinalConsolidation: boolean;
   skillId?: string;
+  skillInput?: unknown;
+  externalAction?: ExecutionExternalAction;
 }
 
 export interface ChiefOfStaffPlan {
