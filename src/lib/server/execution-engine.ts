@@ -138,7 +138,7 @@ export async function createExecutionRun(client: Client, input: CreateExecutionR
     statements.push({
       sql: `INSERT INTO execution_tasks (id,run_id,title,agent_id,status,requires_approval,input_json,attempts,max_attempts,timeout_ms,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      args: [taskId, id, task.title.trim(), task.agentId.trim(), task.requiresApproval ? "blocked" : "pending", task.requiresApproval ? 1 : 0, JSON.stringify(task.input ?? null), 0, task.maxAttempts ?? 2, task.timeoutMs ?? 30_000, now, now],
+      args: [taskId, id, task.title.trim(), task.agentId.trim(), task.requiresApproval ? "blocked" : "pending", task.requiresApproval ? 1 : 0, JSON.stringify(task.input ?? null), 0, task.maxAttempts ?? 2, task.timeoutMs ?? (input.executionMode === "live" ? 300_000 : 30_000), now, now],
     });
     for (const dep of task.dependsOn ?? []) statements.push({
       sql: "INSERT INTO execution_task_dependencies (run_id,task_id,depends_on_task_id) VALUES (?,?,?)",

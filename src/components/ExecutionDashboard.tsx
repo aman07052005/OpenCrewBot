@@ -476,6 +476,8 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
   const [planningMode, setPlanningMode] = useState<ExecutionMode>("mock");
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("mock");
   const [concurrency, setConcurrency] = useState("3");
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>(() => bots.map((bot) => bot.id));
+  const selectedBots = bots.filter((bot) => selectedAgentIds.includes(bot.id));
   const [plan, setPlan] = useState<ChiefOfStaffPlan | null>(null);
   const [planning, setPlanning] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -505,7 +507,7 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
         key: newTaskKey(),
         title: "",
         instructions: "",
-        agentId: bots[0]?.id ?? "",
+        agentId: selectedBots[0]?.id ?? "",
         dependsOn: [],
         rationale: "Added during plan review.",
         isFinalConsolidation: false,
@@ -528,11 +530,11 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
   const generatePlan = async () => {
     setError(null);
     if (!instruction.trim()) return setError("Enter the business instruction you want the agents to complete.");
-    if (!bots.length) return setError("Create an agent before asking the Chief of Staff to plan work.");
+    if (!selectedBots.length) return setError("Select at least one agent before planning work.");
     setPlanning(true);
     setPlan(null);
     try {
-      const result = await api.planChiefOfStaff({ instruction: instruction.trim(), planningMode });
+      const result = await api.planChiefOfStaff({ instruction: instruction.trim(), planningMode, agentIds: selectedBots.map((bot) => bot.id) });
       setPlan(result.plan);
       if (!name.trim()) setName(instruction.trim().replace(/\s+/g, " ").slice(0, 80));
     } catch (planError) {
@@ -582,15 +584,26 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
         <Field label="Business instruction" hint="Describe the outcome, audience, constraints, and desired format. The original text is saved with the run.">
           <textarea className={clsx(inputClass, "min-h-32 resize-y")} value={instruction} onChange={(event) => { setInstruction(event.target.value); setPlan(null); }} maxLength={12_000} placeholder="What should your team of agents accomplish?" />
         </Field>
+        <fieldset className="space-y-2 rounded-xl bg-raised p-3 ring-1 ring-line" disabled={planning || saving}>
+          <legend className="text-[12px] font-medium text-mute">Available agents ({selectedBots.length} selected)</legend>
+          <p className="text-[11px] text-mute">Choose only the agents needed for this run. For local models, a smaller team reduces planning overhead. Configure each selected agent for live inference before starting a live run.</p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => { setSelectedAgentIds(bots.map((bot) => bot.id)); setPlan(null); }}>Select all</Button>
+            <Button size="sm" onClick={() => { setSelectedAgentIds([]); setPlan(null); }}>Clear selection</Button>
+          </div>
+          <div className="max-h-48 space-y-1 overflow-y-auto">
+            {bots.map((bot) => <label key={bot.id} className="flex items-center gap-2 text-[12px] text-mute"><input type="checkbox" checked={selectedAgentIds.includes(bot.id)} onChange={(event) => { const checked = event.target.checked; setSelectedAgentIds((ids) => checked ? [...ids, bot.id] : ids.filter((id) => id !== bot.id)); setPlan(null); }} />{bot.name} · {bot.title || bot.model}</label>)}
+          </div>
+        </fieldset>
         <div className="space-y-2">
           <p className="text-[12px] font-medium text-mute">Planning mode</p>
           <Segmented value={planningMode} onChange={(mode) => { setPlanningMode(mode); setPlan(null); }} options={[
             { value: "mock", label: "MOCK · DETERMINISTIC", hint: "Development planner; no model call." },
             { value: "live", label: "LIVE MODEL", hint: "Uses the configured planner model." },
           ]} />
-          {planningMode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Live planning calls the configured model and may incur a charge. It requires NEBIUS_API_KEY. If the call fails, no mock plan is substituted.</p>}
+          {planningMode === "live" && <p className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] leading-relaxed text-warn">Live planning uses the owner-configured planner provider. Hosted calls may incur a charge. Local inference may take longer. If the call fails, no mock plan is substituted.</p>}
         </div>
-        <Button variant="primary" onClick={() => void generatePlan()} disabled={planning || saving || !bots.length}><Sparkles size={14} /> {planning ? "Planning…" : plan ? "Generate plan again" : "Generate plan"}</Button>
+        <Button variant="primary" onClick={() => void generatePlan()} disabled={planning || saving || !selectedBots.length}><Sparkles size={14} /> {planning ? "Planning…" : plan ? "Generate plan again" : "Generate plan"}</Button>
 
         {plan && <>
           <div className="rounded-xl bg-warn/10 px-3 py-2.5 text-[11px] font-semibold leading-relaxed text-warn">{plan.planningLabel}</div>
@@ -620,7 +633,7 @@ function ChiefOfStaffDrawer({ bots, onClose, onCreate }: { bots: Bot[]; onClose:
                   {!task.isFinalConsolidation && workTasks.length > 1 && <button type="button" onClick={() => removeTask(task)} className="text-[11px] text-danger hover:underline">Remove</button>}
                 </div>
                 <Field label="Task title"><input className={inputClass} value={task.title} onChange={(event) => updateTask(task.key, { title: event.target.value })} maxLength={300} /></Field>
-                <Field label="Assigned agent"><select className={inputClass} value={task.agentId} onChange={(event) => updateTask(task.key, { agentId: event.target.value })}><option value="">Choose an existing agent</option>{bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} · {bot.title || bot.model}</option>)}</select></Field>
+                <Field label="Assigned agent"><select className={inputClass} value={task.agentId} onChange={(event) => updateTask(task.key, { agentId: event.target.value })}><option value="">Choose an existing agent</option>{selectedBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name} · {bot.title || bot.model}</option>)}</select></Field>
                 <Field label="Task instructions"><textarea className={clsx(inputClass, "min-h-24 resize-y")} value={task.instructions} onChange={(event) => updateTask(task.key, { instructions: event.target.value })} maxLength={8_000} /></Field>
                 <div>
                   <p className="mb-1.5 text-[12px] font-medium text-mute">Dependencies</p>

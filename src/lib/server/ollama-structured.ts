@@ -6,6 +6,7 @@ export async function requestOllamaStructured(
   prompt: string,
   schema: object,
   transport: typeof fetch = fetch,
+  limits: { timeoutMs?: number; maxOutputTokens?: number } = {},
 ): Promise<{ object: unknown; usage: { promptTokens?: number; completionTokens?: number } }> {
   const base = new URL(baseURL);
   if (base.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(base.hostname) || base.port !== "11434" || base.username || base.password) {
@@ -15,7 +16,7 @@ export async function requestOllamaStructured(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     redirect: "error",
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(limits.timeoutMs ?? 180_000),
     body: JSON.stringify({
       model,
       messages: [
@@ -24,7 +25,7 @@ export async function requestOllamaStructured(
       ],
       stream: false,
       format: schema,
-      options: { temperature: 0, num_predict: 4096, num_ctx: 8192 },
+      options: { temperature: 0, num_predict: limits.maxOutputTokens ?? 4096, num_ctx: 8192 },
     }),
   });
   if (!response.ok) throw new Error(`Local structured inference failed (HTTP ${response.status}).`);

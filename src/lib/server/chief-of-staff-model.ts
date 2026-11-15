@@ -4,6 +4,7 @@ import { DEFAULT_MODEL } from "./models";
 import { ChiefOfStaffModelPlanSchema, type AgentCapability, type LivePlanGenerator } from "./chief-of-staff";
 import { estimatedCost, extractProviderUsage, generateLocalStructured, globalProviderRoute, languageModelFor } from "./provider-runtime";
 import { recordModelUsage } from "./model-usage";
+import { localPlannerPrompt } from "./local-planner-prompt";
 
 function plannerPrompt(instruction: string, agents: AgentCapability[]): string {
   return [
@@ -30,7 +31,7 @@ export function createLiveChiefOfStaffPlanGenerator(modelId = process.env.OPENCR
     const route = globalProviderRoute("planner", modelId);
     const started = Date.now();
     const result = route.providerId === "ollama"
-      ? await generateLocalStructured(route, 'You plan business work for an owner and select only from the supplied OpenCrewBot agents. You do not execute tasks or call tools.', plannerPrompt(instruction, agents), z.toJSONSchema(ChiefOfStaffModelPlanSchema))
+      ? await generateLocalStructured(route, 'You plan business work for an owner and select only from the supplied OpenCrewBot agents. You do not execute tasks or call tools.', localPlannerPrompt(instruction, agents), z.toJSONSchema(ChiefOfStaffModelPlanSchema), { timeoutMs: 300_000, maxOutputTokens: 3072 })
       : await (async () => {
         const planner = new Agent({
           id: "opencrewbot-chief-of-staff-planner",

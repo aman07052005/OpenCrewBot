@@ -65,6 +65,21 @@ test("additive migration preserves existing application tables and is idempotent
   assert.equal((await f.client.execute("SELECT COUNT(*) AS n FROM schema_migrations")).rows[0].n, 3);
 });
 
+test("live runs persist a bounded longer default while mock and explicit task deadlines are preserved", async (t) => {
+  const { client } = await fixture(t);
+  const tasks = [
+    { key: "default", title: "Default", agentId: "bot-a" },
+    { key: "explicit", title: "Explicit", agentId: "bot-b", timeoutMs: 45_000 },
+  ];
+  for (const [executionMode, expected] of [["live", 300_000], ["mock", 30_000]]) {
+    const created = await createExecutionRun(client, { name: executionMode, executionMode, tasks });
+    const saved = await getExecutionRun(client, created.id);
+    assert.equal(saved.tasks.find((task) => task.title === "Default").timeoutMs, expected);
+    assert.equal(saved.tasks.find((task) => task.title === "Explicit").timeoutMs, 45_000);
+  }
+  await assert.rejects(createExecutionRun(client, { name: "Unbounded", executionMode: "live", tasks: [{ ...tasks[0], timeoutMs: 300_001 }] }), /timeoutMs must be between/);
+});
+
 test("creation validates circular, missing, and duplicate dependencies", async (t) => {
   const { client } = await fixture(t);
   const base = { name: "invalid graph", tasks: [

@@ -10,6 +10,7 @@ const FINAL_TASK_KEY = "final-deliverable";
 export const ChiefOfStaffRequestSchema = z.object({
   instruction: z.string().trim().min(1, "Enter a business instruction.").max(12_000, "Instructions are limited to 12,000 characters."),
   planningMode: z.enum(["mock", "live"]),
+  agentIds: z.array(z.string().min(1).max(200)).min(1).max(100).optional(),
 }).strict();
 
 const TaskSchema = z.object({
@@ -293,16 +294,19 @@ export async function planChiefOfStaff(input: unknown, options: {
   generateLivePlan?: LivePlanGenerator;
 }): Promise<ChiefOfStaffPlan> {
   const request = ChiefOfStaffRequestSchema.parse(input);
-  if (!options.agents.length) throw new ChiefOfStaffPlanningError("Create at least one agent before planning work.");
-  if (request.planningMode === "mock") return deterministicMockPlan(request.instruction, options.agents);
+  const requestedIds = request.agentIds ? new Set(request.agentIds) : null;
+  const agents = requestedIds ? options.agents.filter((agent) => requestedIds.has(agent.id)) : options.agents;
+  if (requestedIds && agents.length !== requestedIds.size) throw new ChiefOfStaffPlanningError("One or more selected agents no longer exist.");
+  if (!agents.length) throw new ChiefOfStaffPlanningError("Create or select at least one agent before planning work.");
+  if (request.planningMode === "mock") return deterministicMockPlan(request.instruction, agents);
   if (!options.generateLivePlan) throw new ChiefOfStaffPlanningError("Live planning is unavailable. Configure an owner-selected live provider and retry in live planning mode.");
   let output: unknown;
   try {
-    output = await options.generateLivePlan({ instruction: request.instruction, agents: options.agents });
+    output = await options.generateLivePlan({ instruction: request.instruction, agents });
   } catch (error) {
     throw new ChiefOfStaffPlanningError(`Live planning failed: ${error instanceof Error ? error.message : "the configured model could not complete the request"}. No mock plan was substituted.`);
   }
-  return planFromLiveModel(output, options.agents);
+  return planFromLiveModel(output, agents);
 }
 
 export function toExecutionRunInput(input: CreateChiefOfStaffRunInput): CreateExecutionRunInput {

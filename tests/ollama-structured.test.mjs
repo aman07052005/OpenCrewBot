@@ -24,3 +24,12 @@ test("local structured generation rejects unsafe endpoints, malformed JSON and t
   await assert.rejects(run("http://127.0.0.1:11434/v1", { done: true, message: { content: "{}", tool_calls: [{}] } }), /tool-free/);
   await assert.rejects(run("http://127.0.0.1:11434/v1", { done: false, message: { content: "{}" } }), /completed/);
 });
+
+test("planner can apply a distinct bounded output limit while factory defaults remain unchanged", async () => {
+  const transport = async (_url, init) => {
+    assert.equal(JSON.parse(init.body).options.num_predict, 3072);
+    assert.ok(init.signal instanceof AbortSignal);
+    return Response.json({ done: true, message: { content: '{"name":"Orion"}' } });
+  };
+  await requestOllamaStructured("http://127.0.0.1:11434/v1", "local", "system", "prompt", schema, transport, { timeoutMs: 300_000, maxOutputTokens: 3072 });
+});

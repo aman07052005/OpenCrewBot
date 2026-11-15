@@ -58,10 +58,10 @@ export function languageModelFor(route: ModelRoute) {
   return createOpenAICompatible({ name: route.providerId, baseURL: settings.baseURL, apiKey: settings.apiKey, includeUsage: true, fetch: pinnedFetch(settings) }).chatModel(route.model);
 }
 /** Native JSON-schema format for local tool-free planning and factory generation. */
-export function generateLocalStructured(route: ModelRoute, system: string, prompt: string, schema: object) {
+export function generateLocalStructured(route: ModelRoute, system: string, prompt: string, schema: object, limits?: { timeoutMs?: number; maxOutputTokens?: number }) {
   if (route.providerId !== "ollama" || !allowedCompatibleModel("ollama", route.model)) throw new Error("Local model is not in the owner-configured allowlist.");
   const settings = endpointFor("ollama");
-  return requestOllamaStructured(settings.baseURL, route.model, system, prompt, schema, pinnedFetch(settings));
+  return requestOllamaStructured(settings.baseURL, route.model, system, prompt, schema, pinnedFetch(settings), limits);
 }
 export async function verifyProviderConnection(providerId: Exclude<ModelProviderId, "mock" | "nebius">): Promise<{ models: string[] }> {
   const settings = endpointFor(providerId);

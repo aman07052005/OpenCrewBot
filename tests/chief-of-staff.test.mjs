@@ -243,3 +243,15 @@ test("Chief of Staff plans persist and final consolidation receives every depend
   assert.match(buildExecutionPrompt(finalTask, finalDependencies), /final consolidation task/i);
   assert.match(buildExecutionPrompt(finalTask, finalDependencies), /Output from Review customer feedback/);
 });
+
+test("owner-selected agent list restricts live generation and rejects out-of-roster assignments", async () => {
+  const input = { instruction: "Prepare a customer update", planningMode: "live", agentIds: ["writer"] };
+  const result = await planChiefOfStaff(input, { agents: capabilities, generateLivePlan: async ({ agents }) => {
+    assert.deepEqual(agents.map((agent) => agent.id), ["writer"]);
+    const output = liveOutput();
+    return { ...output, tasks: output.tasks.map((task) => ({ ...task, agentId: "writer" })) };
+  } });
+  assert.ok(result.tasks.every((task) => task.agentId === "writer"));
+  await assert.rejects(planChiefOfStaff(input, { agents: capabilities, generateLivePlan: async () => liveOutput() }));
+  await assert.rejects(planChiefOfStaff({ ...input, agentIds: ["missing"] }, { agents: capabilities, generateLivePlan: async () => { throw new Error("should not call model"); } }), /selected agents/);
+});
