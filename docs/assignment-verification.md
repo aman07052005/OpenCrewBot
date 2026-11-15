@@ -57,3 +57,12 @@ Pinned package manager and dependency versions are in `package.json`/`pnpm-lock.
 ## Evidence capture before submission
 
 Keep actual screenshots/video outside the repository unless sanitized and explicitly included. Recommended evidence: completed GitHub run and rejected approval count, deterministic chart and JSON output, live factory and room final, memory revision before/after, schedule history plus linked LIVE result, models usage ledger, test terminal summary. Crop unrelated browser tabs, credentials, connection/message IDs and private data. Do not include `.env`, `data/`, private transcripts or model weights. The upstream illustration images are not new acceptance screenshots.
+
+### Final LIVE Scheduling Verification — November 15, 2026
+
+The Live Competitor Monitoring workflow successfully completed three LIVE executions at 14:45:14, 14:48:14 and 14:51:14 IST using Orion's configured local model.
+
+The latest execution completed in 26 seconds with a 300-second task timeout. Persisted output confirms simulated: false.
+
+Reports use a supplied competitor baseline rather than freshly retrieved market information.
+
