@@ -1,11 +1,3 @@
-## Product Demonstration
-
-[Watch the OpenCrewBot 2.0 Demonstration](https://drive.google.com/file/d/1pb9Zw0F4gk-XodgpDLLWjhxoU3lM1YDy/view?usp=sharing)
-
-The screen-recorded demonstration showcases the autonomous AI workforce, business workflows, live integrations, persistent memory, approval enforcement, scheduled automation and engineering documentation.
-
----
-
 <div align="center">
 <img src="docs/logo.svg" alt="OpenCrewBot mascot" width="88" />
 
@@ -16,6 +8,70 @@ A local-first AI workforce: plan, delegate, execute, review and schedule busines
 
 [Setup](#quick-start) · [Architecture](docs/architecture.md) · [Requirements and evidence](docs/assignment-verification.md) · [Demo guide](docs/demo-guide.md) · [MIT license](LICENSE)
 </div>
+
+<!-- DEMO_START -->
+
+## Product Demonstration
+
+<div align="center">
+
+### OpenCrewBot 2.0 - Autonomous AI Workforce
+
+[![Watch Product Demo](https://img.shields.io/badge/Watch%20Product%20Demo-Google%20Drive-4285F4?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/1pb9Zw0F4gk-XodgpDLLWjhxoU3lM1YDy/view?usp=sharing)
+
+**EDXSO AI Engineer Intern | Assignment 3**
+
+[Watch the complete demonstration video](https://drive.google.com/file/d/1pb9Zw0F4gk-XodgpDLLWjhxoU3lM1YDy/view?usp=sharing)
+
+</div>
+
+The screen-recorded demonstration presents the working OpenCrewBot 2.0 application, its autonomous execution capabilities, business workflows, integrations and engineering implementation.
+
+### Demonstration Coverage
+
+| No. | Demonstration | Module |
+| --- | --- | --- |
+| 01 | Application Introduction and Dashboard | Overview |
+| 02 | Dynamic Agent Factory | B |
+| 03 | Chief of Staff and Intelligent Task Planning | A, D |
+| 04 | Multi-Agent Collaboration and Delegation | C |
+| 05 | Data Analysis and Visualization | D, F |
+| 06 | MeetUniversity Competitor Intelligence | A, F |
+| 07 | Aspirations Marketing Campaign | A, F |
+| 08 | Human Approval and Failure Handling | D, G |
+| 09 | Persistent Memory and Preference Correction | E |
+| 10 | LIVE Recurring Workflow Automation | I |
+| 11 | GitHub, Gmail and MCP Integrations | H |
+| 12 | Multi-Model Intelligence and Token Usage | J |
+| 13 | Automated Testing and Engineering Reliability | Testing |
+| 14 | System Architecture, Documentation and Conclusion | Architecture |
+
+### Implementation Highlights
+
+- Implementation covering all ten assignment modules.
+- Eight reusable executable business skills.
+- Three verified integrations: GitHub, Gmail and MCP.
+- Real local AI inference using Ollama and Qwen.
+- Persistent task execution, dependencies and approval enforcement.
+- Scheduled LIVE workflow execution.
+- 122 automated tests reported passing.
+- Successful production build.
+
+### Demonstration Transparency
+
+LIVE model outputs, deterministic skill results and simulated workflows are distinguished throughout the project documentation. Gmail and MCP demonstrations use synthetic test data. Competitor analysis uses supplied evidence. Hosted model fallback and other verification limitations are documented explicitly.
+
+### Supporting Documentation
+
+- [System Architecture](docs/architecture.md)
+- [Assignment Verification and Test Evidence](docs/assignment-verification.md)
+- [Demonstration Guide](docs/demo-guide.md)
+- [Local Installation Instructions](#quick-start)
+
+> If Google Drive is still processing the video preview, download the original MP4 to view the demonstration locally.
+
+<!-- DEMO_END -->
+
 
 ## Overview
 
